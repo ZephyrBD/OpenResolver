@@ -361,6 +361,16 @@ export function createCodeartsPool({
       } catch (err) {
         if (err instanceof CaStreamError) {
           const cls = classifyUpstreamError(200, JSON.stringify({ error_code: err.biz.code, error_msg: err.biz.msg }));
+          // 请求级客户端错误（如 TM.000010051 模型未开通）不重试、不惩罚账号：
+          // 换号/冷却都救不了，惩罚只会让同账号其它模型一起不可用 6 小时。
+          if (cls.kind === 'client' && !cls.retryable) {
+            if (streaming && wrote) {
+              writeAnthropicError(res, errorFrom(cls, 400));
+              res.end();
+              return;
+            }
+            throw errorFrom(cls, 400);
+          }
           // 流内业务错误照 Trae 坑位处理：先分类记账再决定客户端出口
           scheduler.onUpstreamError(acc, cls);
           if (stickyKey) scheduler.stickyClear(stickyKey);
@@ -369,7 +379,6 @@ export function createCodeartsPool({
             res.end();
             return;
           }
-          if (cls.kind === 'client' && !cls.retryable) throw errorFrom(cls, 400);
           lastError = errorFrom(cls, cls.kind === 'client' ? 400 : 502);
           continue;
         }

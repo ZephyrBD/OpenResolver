@@ -175,6 +175,30 @@ test('classifyUpstreamError：401→auth；429→rate_limit；5xx→server；err
   assert.equal(embeddedSseStatus('TM.000010051', ''), 400, '只给错误码也要判 400');
 });
 
+test('流内 TM.000010051（模型未开通）→ 400 但绝不冷却账号', async (t) => {
+  const stub = await startStub(t, (req, res) => {
+    if (req.url !== EP_CHAT_V2) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: {"text":"[DONE]","error_code":"TM.000010051","error_msg":"您当前无权调用该模型，请联系企业管理员开通。"}\n\n');
+  });
+  const pool = makePool(stub, { maxAttempts: 1 });
+  const { db, full } = seedDb({ name: 'dev', pools: ['codearts'] });
+  const { base } = await startGateway(t, { pools: [pool], db });
+
+  const res = await runMessages(base, full, {
+    model: 'codearts/GLM-5.3-Flash',
+    max_tokens: 64,
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(res.status, 400);
+  assert.equal(pool.scheduler.accounts[0].cooldownUntil, 0, '请求级模型未开通不得冷却账号');
+  assert.equal(pool.scheduler.accounts[0].state, 'ok');
+});
+
 test('福利路由：种子模型带 maas_type: benefit 头（计入签名）；目录转正后摘头', async (t) => {
   const stub = await startStub(t, (req, res, rec) => {
     // 额度 fire-and-forget 的辅助请求：不解析 chat body
