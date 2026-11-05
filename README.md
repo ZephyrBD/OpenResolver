@@ -4,7 +4,7 @@
 
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](package.json)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的订阅额度，包装成标准的 Claude Code / OpenAI 兼容端点。它只依赖 Node.js 内置模块，无 `npm install`、无数据库、无 Docker，账号与密钥全部落在本地。
 
@@ -222,4 +222,4 @@ test/            单元与集成测试
 
 ## License
 
-[MIT](LICENSE) © 2026 ZephyrBD
+[Apache License 2.0](LICENSE) © 2026 ZephyrBD
