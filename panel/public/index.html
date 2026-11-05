@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open-Resolver 面板</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/panel/style.css">
+</head>
+<body>
+  <aside id="sidebar" class="layout-sidebar hidden">
+    <span class="brand"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="5" cy="9" r="4" fill="#0acf83"/><rect x="9" y="1" width="8" height="8" rx="3" fill="#1abcfe"/><circle cx="12" cy="13" r="4" fill="#a259ff" opacity="0.85"/></svg>Open-Resolver</span>
+    <nav id="nav">
+      <a href="#/dashboard">仪表盘</a>
+      <a href="#/accounts">账号</a>
+      <a href="#/keys">密钥</a>
+      <a href="#/settings">设置</a>
+    </nav>
+    <button id="logout-btn" type="button">登出</button>
+  </aside>
+
+  <main id="view" class="layout-main"></main>
+
+  <div id="login-overlay" class="hidden">
+    <form id="login-form">
+      <figure><svg width="120" height="72" viewBox="0 0 120 90" aria-hidden="true"><rect x="52" y="10" width="34" height="34" rx="10" fill="#1abcfe" opacity="0.85"/><circle cx="30" cy="34" r="20" fill="#a259ff" opacity="0.65"/><circle cx="88" cy="58" r="24" fill="#ff7262" opacity="0.55"/><circle cx="56" cy="68" r="5" fill="#0acf83"/></svg></figure>
+      <h1>管理员登录</h1>
+      <p id="login-error" class="error hidden"></p>
+      <label for="login-password">密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" required>
+      <button type="submit">登录</button>
+    </form>
+  </div>
+
+  <script type="module" src="/panel/app.js"></script>
+</body>
+</html>

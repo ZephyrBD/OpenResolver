@@ -1,0 +1,552 @@
+/* Open-Resolver 面板 · Playful Color（Design-md.md）
+   CSP style-src 'self'：零内联样式，一切经本文件；
+   品牌五色按页轮换（--accent-page 由 body[data-page] 定义，app.js 挂钩） */
+
+/* ---- 资产：Inter 可变字体（OFL，本地打包） ---- */
+@font-face {
+  font-family: "Inter";
+  src: url("/panel/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- 设计令牌（spec 逐字值） ---- */
+:root {
+  --bg: #ffffff;
+  --bg-alt: #fafafa;
+  --text: #0f0f14;
+  --text-muted: #6e6e78;
+  --border: #e5e5ea;
+
+  /* brand prism — 五色全部一等公民，跨节轮换 */
+  --brand-green: #0acf83;
+  --brand-orange: #f24e1e;
+  --brand-purple: #a259ff;
+  --brand-red: #ff7262;
+  --brand-blue: #1abcfe;
+
+  --accent-default: var(--brand-purple);
+  --radius: 12px;
+  --radius-lg: 20px;
+  --shadow-hover: 0 8px 24px rgba(15, 15, 20, 0.08);
+
+  /* 语义状态色：品牌色调暗保证可读（不引入新色相） */
+  --ok: color-mix(in srgb, var(--brand-green) 72%, #0f0f14);
+  --warn: color-mix(in srgb, var(--brand-orange) 78%, #0f0f14);
+  --err: color-mix(in srgb, var(--brand-red) 72%, #0f0f14);
+}
+
+/* accent 按页轮换：仪表盘=绿 / 账号=蓝 / 密钥=紫 / 设置=橙 / 登录=红 */
+body { --accent-page: var(--brand-red); }
+body[data-page="dashboard"] { --accent-page: var(--brand-green); }
+body[data-page="accounts"]  { --accent-page: var(--brand-blue); }
+body[data-page="keys"]      { --accent-page: var(--brand-purple); }
+body[data-page="settings"]  { --accent-page: var(--brand-orange); }
+
+/* accent 的"文本墨色"（评审 I-1）：品牌色按页轮换派生其可读文本版——随页自动重算 */
+body { --accent-ink: color-mix(in srgb, var(--accent-page) 60%, #0f0f14); }
+
+/* ---- 基础 ---- */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.6 "Inter", "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent-page) 18%, transparent);
+}
+
+.hidden { display: none !important; }
+
+a { color: var(--accent-ink); text-decoration: none; }
+
+/* ---- 外壳：body 直接 grid（侧栏 220px + 内容 1fr） ---- */
+body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.layout-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px 16px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 10;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  padding: 0 8px;
+}
+.brand svg { display: block; flex-shrink: 0; }
+
+#nav { display: flex; flex-direction: column; gap: 4px; }
+#nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+#nav a:hover {
+  color: var(--text);
+  background: var(--bg-alt);
+}
+#nav a.active {
+  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--accent-page) 12%, transparent);
+}
+
+/* 登出按钮钉在侧栏底部（池灯容器 Task 4 已移除，靠 margin-top: auto 吃掉剩余空间） */
+#logout-btn { margin: 0 8px; margin-top: auto; }
+
+/* ---- 文本 ---- */
+h2 {
+  margin: 0 0 12px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+h3 {
+  margin: 20px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.error { color: var(--err); margin: 8px 0; white-space: pre-wrap; }
+.muted { color: var(--text-muted); }
+
+.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+
+/* ---- 按钮 ---- */
+button {
+  background: var(--bg);
+  color: var(--accent-ink);
+  border: 1.5px solid var(--accent-page);
+  border-radius: 8px;
+  padding: 9px 16px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 1.2;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+button:hover {
+  background: color-mix(in srgb, var(--accent-page) 10%, transparent);
+}
+button:focus-visible,
+#nav a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-page);
+  outline-offset: 1px;
+}
+
+button.primary {
+  background: var(--accent-page);
+  border-color: var(--accent-page);
+  color: #ffffff;
+  padding: 10px 18px;
+}
+button.primary:hover {
+  background: color-mix(in srgb, var(--accent-page) 90%, #0f0f14);
+}
+
+button.danger {
+  color: var(--err);
+  border-color: var(--err);
+}
+button.danger:hover {
+  background: color-mix(in srgb, var(--brand-red) 10%, transparent);
+}
+#sidebar button.danger { border-color: var(--border); color: var(--text-muted); }
+#sidebar button.danger:hover { background: var(--bg-alt); }
+
+button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- 输入 ---- */
+input, select, textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent-page);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-page);
+}
+input[type="checkbox"] { width: auto; accent-color: var(--accent-page); }
+
+/* ---- 主体布局：内容区独立滚动，1280px / 32px gutter / 8px 基数 ---- */
+main {
+  padding: 24px 32px 48px;
+  max-width: calc(1280px + 64px);
+  width: 100%;
+  margin: 0 auto;
+}
+.layout-main { overflow-y: auto; max-height: 100vh; }
+
+/* ---- 卡片 ---- */
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  transition: box-shadow 150ms ease;
+}
+.card:hover { box-shadow: var(--shadow-hover); }
+/* 降级/告警卡整行独占（4 统计卡之上/之下通栏） */
+.card.wide { grid-column: 1 / -1; }
+
+/* prism 行：统计卡按序轮换五色，顶部 3px 色沿 + 10% 底 tint（signature） */
+.card:nth-child(5n + 1) { border-top: 3px solid var(--brand-green);  background: color-mix(in srgb, var(--brand-green) 8%, var(--bg)); }
+.card:nth-child(5n + 2) { border-top: 3px solid var(--brand-blue);   background: color-mix(in srgb, var(--brand-blue) 8%, var(--bg)); }
+.card:nth-child(5n + 3) { border-top: 3px solid var(--brand-purple); background: color-mix(in srgb, var(--brand-purple) 8%, var(--bg)); }
+.card:nth-child(5n + 4) { border-top: 3px solid var(--brand-orange); background: color-mix(in srgb, var(--brand-orange) 8%, var(--bg)); }
+.card:nth-child(5n + 5) { border-top: 3px solid var(--brand-red);    background: color-mix(in srgb, var(--brand-red) 8%, var(--bg)); }
+
+.card .label { color: var(--text-muted); font-size: 13px; font-weight: 500; }
+.card .value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.card .sub { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+.card .sub .bad { color: var(--err); }
+
+/* ---- 表格 ---- */
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-weight: 500; font-size: 13px; background: var(--bg-alt); }
+tr:last-child td { border-bottom: none; }
+tbody tr { transition: background-color 120ms ease; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent-page) 4%, transparent); }
+
+td.actions { white-space: nowrap; }
+td.actions button { margin-right: 6px; }
+
+.state-ok { color: var(--ok); font-variant-numeric: tabular-nums; }
+.state-needs_login, .state-disabled { color: var(--err); }
+.state-cooling { color: var(--warn); }
+
+.quota { min-width: 90px; }
+.quota .qbar { display: block; margin-bottom: 2px; }
+
+/* ---- 尺寸助手 ---- */
+.w-sm { width: 70px; }
+.w-md { min-width: 180px; }
+.w-lg { min-width: 240px; }
+.grow { flex: 1; min-width: 240px; }
+
+/* ---- 页面头部（h2 + 池下拉一行；账号页 Task 4 起） ---- */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.page-head h2 { margin: 0; }
+.page-head select { min-width: 140px; }
+
+/* ---- 动作按钮行（账号页 Task 4：登录接入 / 新增账号 / 领取） ---- */
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+}
+
+/* ---- 含情景的面板盒 ---- */
+.panel-box {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin: 16px 0;
+  transition: box-shadow 150ms ease;
+}
+.panel-box:hover { box-shadow: var(--shadow-hover); }
+.form-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0; }
+.form-row label { color: var(--text-muted); }
+
+/* 设置页：标签列对齐 + 统一输入宽度 */
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 140px auto;
+  gap: 10px;
+  align-items: center;
+  margin: 8px 0;
+}
+.settings-row label { color: var(--text-muted); }
+.settings-row .settings-input { width: 140px; min-width: 0; }
+.settings-row .muted { justify-self: start; }
+
+/* 控制台密码：三个输入等宽伸展，按钮不被挤下去 */
+.password-row { align-items: center; }
+.password-row .password-input { flex: 1 1 200px; min-width: 0; max-width: 320px; }
+.password-row button { flex: 0 0 auto; }
+
+/* 创建密钥：标签列 / 控件列两列栅格；启用池复选框自动换行 */
+.key-form {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px 14px;
+  align-items: start;
+}
+.key-form > label {
+  color: var(--text-muted);
+  padding-top: 8px; /* 与输入框/复选框首行文字基线对齐 */
+}
+.key-form .pool-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+.key-form .pool-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.key-form .key-expiry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ---- 密钥明文一次性展示 ---- */
+.secret-box {
+  background: color-mix(in srgb, var(--brand-orange) 8%, var(--bg));
+  border: 1.5px solid var(--brand-orange);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 16px 0;
+}
+.secret-box .secret {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 17px;
+  word-break: break-all;
+  margin: 10px 0;
+  color: var(--text);
+}
+
+/* ---- 用量图（整宽自适应：viewBox 定比例，高度随宽度走） ---- */
+svg.chart {
+  width: 100%;
+  height: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ---- 空状态插画位（app.js emptyState 注入） ---- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.empty-state svg { display: block; }
+
+/* ---- 登录 ---- */
+#login-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--brand-red) 10%, var(--bg));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#login-form {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 32px 36px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-hover);
+}
+#login-form figure { margin: 0; text-align: center; }
+/* 登录提交是全表唯一主动作 → primary 实心（走查回归修正） */
+#login-form > button {
+  background: var(--accent-page);
+  border-color: var(--accent-page);
+  color: #ffffff;
+  padding: 10px 18px;
+}
+#login-form > button:hover {
+  background: color-mix(in srgb, var(--accent-page) 90%, #0f0f14);
+}
+#login-form h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+#login-error { font-size: 15px; }
+
+/* ---- 弹层完整视觉（openDialog 产物：dialog.dlg > h3 + div.dlg-body） ---- */
+dialog.dlg {
+  border: none;
+  border-radius: var(--radius-lg);
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px); /* 矮视口兜底：长内容（claim tried 明细）不许顶出屏幕 */
+  overflow-y: auto; /* 超高时弹层自身可滚 */
+  padding: 24px 28px;
+  box-shadow: var(--shadow-hover);
+  background: var(--bg);
+  color: var(--text);
+}
+/* 半透明遮罩（spec 决策 5） */
+dialog.dlg::backdrop { background: rgba(15, 15, 20, 0.35); }
+/* 入场：150ms fade + scale（只认 [open] 态——remove 即关，无离场动画） */
+dialog.dlg[open] { animation: dlg-in 150ms ease-out; }
+@keyframes dlg-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* 标题行：h3 是 dialog 直接子元素，弹层态脱离页面 h3 的 muted 小字风格 */
+dialog.dlg > h3 {
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+.dlg-body { display: flex; flex-direction: column; gap: 4px; }
+.dlg-body .form-row:first-child { margin-top: 0; }
+/* 弹层内表格不出盒（复用页面 table，但弹层空间小，去掉 margin 冲击） */
+dialog.dlg table { margin: 8px 0; }
+
+/* 弹层按钮组（confirmDialog 产物 .dlg-actions）：右对齐，确认在左、取消在右（对话流向） */
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ---- API 接入说明（弹层内展示；卡片本体 .api-dialog-card 复用 .panel-box） ---- */
+.api-example { position: relative; margin: 6px 0 16px; }
+.api-example .code, pre.code {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: 13px/1.6 ui-monospace, Consolas, monospace;
+  overflow-x: auto;
+  padding: 10px 14px;
+  margin: 0;
+  white-space: pre;
+}
+.api-example button { position: absolute; top: 8px; right: 8px; padding: 6px 10px; }
+
+/* ---- 卡片响应式：四卡等宽 → 两卡 → 单列 ---- */
+@media (max-width: 900px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
+  .card.wide { grid-column: auto; }
+}
+
+/* ---- 设置行 / 创建密钥表单：窄屏单列堆叠 ---- */
+@media (max-width: 640px) {
+  .settings-row { grid-template-columns: 1fr; gap: 6px; }
+  .settings-row .settings-input { width: 100%; }
+  .password-row .password-input { flex-basis: 100%; max-width: none; }
+}
+@media (max-width: 560px) {
+  .key-form { grid-template-columns: 1fr; gap: 6px; }
+  .key-form > label { padding-top: 0; }
+}
+
+/* ---- 响应式（spec §8：768px 以下侧栏塌缩为横条） ---- */
+@media (max-width: 768px) {
+  body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .layout-sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  #nav { flex-direction: row; flex-wrap: wrap; }
+  .layout-main { max-height: none; }
+  main { padding: 16px 16px 32px; }
+  h2 { font-size: 20px; }
+  #login-form { width: min(360px, calc(100vw - 32px)); }
+  table { display: block; overflow-x: auto; }
+  .empty-state svg { width: 72px; }
+  /* 弹层近全屏：92vw + margin auto 收窄，放开 720px 宽限 */
+  dialog.dlg {
+    width: 92vw;
+    max-width: none;
+    margin: auto;
+    padding: 20px 18px;
+  }
+}
+
+/* ---- 动效尊重系统设置 ----
+   全局 * { transition: none } 盖不住 @keyframes（animation 非 transition），
+   弹层入场动画须单独禁掉。 */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+  dialog.dlg[open] { animation: none; }
+}
