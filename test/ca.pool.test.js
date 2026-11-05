@@ -199,7 +199,8 @@ test('流内 TM.000010051（模型未开通）→ 400 但绝不冷却账号', as
   assert.equal(pool.scheduler.accounts[0].state, 'ok');
 });
 
-test('福利路由：种子模型带 maas_type: benefit 头（计入签名）；目录转正后摘头', async (t) => {
+test('chat 头：model-id/model-name 与请求体一致、同凭证复用会话 ID、无 maas_type', async (t) => {
+  const seen = [];
   const stub = await startStub(t, (req, res, rec) => {
     // 额度 fire-and-forget 的辅助请求：不解析 chat body
     if (req.url !== EP_CHAT_V2) {
@@ -208,12 +209,7 @@ test('福利路由：种子模型带 maas_type: benefit 头（计入签名）；
       return;
     }
     const body = JSON.parse(rec.body);
-    // 请求 1：glm-5.3-flash（种子福利）必须带头；请求 2：GLM-5.2（内置）不带头
-    if (body.model === 'glm-5.3-flash' || body.model === 'GLM-5.3-Flash') {
-      assert.equal(rec.headers['maas_type'], 'benefit');
-    } else {
-      assert.equal(rec.headers['maas_type'], undefined);
-    }
+    seen.push({ body, headers: rec.headers });
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(OK_SSE);
   });
@@ -222,9 +218,18 @@ test('福利路由：种子模型带 maas_type: benefit 头（计入签名）；
   const { base } = await startGateway(t, { pools: [pool], db });
 
   let res = await runMessages(base, full, { model: 'codearts/glm-5.3-flash', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] });
-  assert.equal(res.status, 200, '种子福利模型带头可通');
+  assert.equal(res.status, 200);
   res = await runMessages(base, full, { model: 'codearts/glm-5.2', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] });
   assert.equal(res.status, 200);
+
+  const [first, second] = seen;
+  assert.equal(first.body.model, 'glm-5.3-flash', '上游 ID 大小写原样');
+  assert.equal(first.headers['model-id'], first.body.model, 'model-id 必须与 body 完全一致');
+  assert.equal(first.headers['model-name'], first.body.model, 'model-name 必须与 body 完全一致');
+  assert.equal(first.headers.maas_type, undefined, '免费权益通道已下线，不得再带 maas_type');
+  assert.equal(first.headers['x-ot-session-id'], first.headers['user-session-id']);
+  assert.equal(second.headers['x-ot-session-id'], first.headers['x-ot-session-id'], '同一凭证复用会话 ID');
+  assert.notEqual(second.headers['x-ot-trace-id'], first.headers['x-ot-trace-id'], 'trace 每次请求都要变');
 });
 
 test('模型三路发现：单路失败降级 + 福利幂等领取调用断言 + 合并/排序', async (t) => {
@@ -256,7 +261,7 @@ test('模型三路发现：单路失败降级 + 福利幂等领取调用断言 +
   assert.equal(await pool.refreshModels(), true, '三路全成功');
   assert.equal(pool.catalog.source, 'agent+builtin+benefit');
   const ids = pool.models().map((m) => m.id);
-  assert.deepEqual(ids, ['AgentOnly', 'deepseek-v4-pro-0813', 'GLM-5.2'], '按小写 ID 字节序排序');
+  assert.deepEqual(ids, ['deepseek-v4-pro-0813', 'GLM-5.2'], 'builtin 为准；agent-only 显示名不暴露');
   assert.equal(pool.models().find((m) => m.id === 'GLM-5.2').context_window, 168000);
   assert.equal(pool.models().find((m) => m.id === 'deepseek-v4-pro-0813').benefit, true);
   assert.ok(stub.requests.some((r) => r.url === '/api/v1/benefit/claim'), 'claimAuto 默认开，领取被调用');
@@ -301,7 +306,7 @@ test('空 userId：目录键回退账号 id，发现结果不丢；种子已下�
 
   assert.equal(await pool.refreshModels(), true, 'agent+builtin 成功即算发现成功（benefit 失败不影响）');
   const ids = pool.models().map((m) => m.id);
-  assert.ok(ids.includes('GLM-5.2'), '发现到的内置模型进 /v1/models');
+  assert.ok(!ids.includes('GLM-5.2'), 'agent-only 显示名不暴露（上游 ID 区分大小写）');
   assert.ok(ids.includes('glm-5.3'), 'builtin 下发的 glm-5.3 进 /v1/models');
   assert.ok(!ids.includes('deepseek-v4-flash-0731'), '已下架的种子福利模型不再出现在列表');
 
@@ -309,6 +314,37 @@ test('空 userId：目录键回退账号 id，发现结果不丢；种子已下�
   assert.equal(pool.catalog.isBenefit('ca-empty', 'deepseek-v4-flash-0731'), false);
   assert.equal(pool.catalog.isBenefit('ca-empty', 'GLM-5.2'), false);
   assert.equal(pool.catalog.isBenefit('ca-empty', 'glm-5.3'), false, 'builtin 登记即非福利');
+});
+
+test('模型 ID：agent 的显示名必须映射回 builtin 的可调用 model_id（大小写敏感）', async (t) => {
+  const stub = await startStub(t, (req, res) => {
+    if (req.url.startsWith('/v1/agent-center/agents/useragents')) {
+      res.end(JSON.stringify({ agents: [{ agent_id: 'a1', agent_name: 'CodeAgent', alias: { alias_zh_cn: '智能体' }, show_in_ide: true }] }));
+      return;
+    }
+    if (req.url.startsWith('/v1/agent-center/agents/detail')) {
+      res.end(JSON.stringify({ gpts: { models: [{ model_name: 'GLM-5.3-Flash', model_parameters: { context_window: 1000000 } }] } }));
+      return;
+    }
+    if (req.url === '/v1/model/builtin') {
+      res.end(JSON.stringify({ builtinModels: [{ model_id: 'glm-5.3-flash', model_name: 'GLM-5.3-Flash' }] }));
+      return;
+    }
+    if (req.url === '/api/v1/gateway/config') {
+      res.end(JSON.stringify({ error_code: '4000', error_msg: 'invalid channel, group not found' }));
+      return;
+    }
+    res.end('{}');
+  });
+  const pool = makePool(stub, { maxAttempts: 1 });
+  assert.equal(await pool.refreshModels(), true);
+
+  const ids = pool.models().map((m) => m.id);
+  assert.deepEqual(ids, ['glm-5.3-flash'], '只暴露上游可调用 ID，不暴露显示名');
+  assert.equal(pool.models()[0].display_name, 'GLM-5.3-Flash', '显示名保留');
+  assert.equal(pool.models()[0].context_window, 1000000, 'agent 元数据合并进 builtin 条目');
+  assert.equal(pool.catalog.canonicalModel('GLM-5.3-Flash'), 'glm-5.3-flash', '客户端传显示名时归一为可调用 ID');
+  assert.equal(pool.catalog.canonicalModel('glm-5.3-flash'), 'glm-5.3-flash');
 });
 
 test('srcFail 退避：同来源失败后 5min 内不再打该端点', async (t) => {
@@ -416,7 +452,7 @@ test('池名 codearts 进 /health 与 /v1/models（无账号静态降级表）',
   const models = await (await fetch(`${base}/v1/models`, { headers: { 'x-api-key': full } })).json();
   const ids = models.data.map((m) => m.id);
   assert.ok(ids.some((id) => id.startsWith('codearts/')), 'codearts 池有模型');
-  assert.ok(ids.some((id) => id === 'codearts/glm-5.3-flash'), '静态降级表含种子福利模型');
+  assert.ok(ids.some((id) => id === 'codearts/glm-5.3'), '静态降级表含当前可调用模型');
 });
 
 test('refresh patch 整组落盘：accounts.json 更新新 STS 凭证与 refresh_token', async (t) => {

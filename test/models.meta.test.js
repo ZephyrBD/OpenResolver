@@ -116,7 +116,7 @@ test('codearts: models() 带 upstream_model === id 且 context_window 数字或 
   });
   const models = pool.models();
   assertModelShape(models, 'codearts');
-  const seeded = models.find((m) => m.id === 'glm-5.3-flash');
-  assert.ok(seeded, '种子福利模型在静态降级表里');
-  assert.equal(seeded.benefit, true);
+  const seeded = models.find((m) => m.id === 'glm-5.3');
+  assert.ok(seeded, '冷启动种子在静态降级表里');
+  assert.equal(seeded.benefit, false, '免费权益通道已下线，种子不再标记 benefit');
 });

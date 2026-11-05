@@ -19,7 +19,7 @@ import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 import { messagesToChatCompletions } from '../../adapters/anthropic-to-openai.mjs';
-import { SNAP_ENGINE_API_HOST, BENEFIT_HOST, EP_CHAT_V2, HEADER_MAAS_TYPE, MAAS_BENEFIT } from './constants.mjs';
+import { SNAP_ENGINE_API_HOST, BENEFIT_HOST, EP_CHAT_V2 } from './constants.mjs';
 import { signRequest } from './signer.mjs';
 import { consumeCaSse, embeddedSseStatus, CaStreamError } from './stream.mjs';
 import { createTokenManager } from './auth.mjs';
@@ -148,16 +148,39 @@ export function sessionIdFor(chatId) {
   return crypto.createHash('sha256').update(`codearts-session:${chatId}`, 'utf8').digest('hex').slice(0, 32);
 }
 
-// ChatHeadersV2（client.go:442-458）：x-auth-token + AK/SK 签名，无 Agent-Type。
-export function chatHeadersV2(token, traceID, language = 'zh-cn') {
+// ChatHeadersV2（client.go:442-458 + baseHeaders）：x-auth-token + AK/SK 签名。
+// 上游按 x-ot-session-id 统计并发会话（每账号 3 个），必须按凭证复用稳定 ID；
+// model-id / model-name 必须与请求体 model 完全一致（上游会校验，且区分大小写）。
+export function upstreamSessionId(acc, cred) {
+  const key = `${acc?.domainId || ''}|${cred?.accessKeyID || ''}` || String(acc?.id || '');
+  return 'ses_' + crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+export function chatHeadersV2(token, traceID, { model, sessionId, language = 'zh-cn' } = {}) {
+  const span = crypto.randomBytes(8).toString('hex');
   return {
     'Content-Type': 'application/json',
     Accept: 'text/event-stream',
     'x-auth-token': token,
-    'x-snap-traceid': traceID,
+    'x-snap-traceid': `${traceID}_${span}`,
     'X-Language': language,
     'app-id': 'CodeAgent3.0',
     is_confidential: 'false',
+    'x-ot-function': 'agent-general',
+    'x-ot-trace-id': traceID,
+    'x-ot-span-id': span,
+    'x-ot-client-type': 'IDE',
+    'x-ot-client-version': '26.9.902',
+    'plugin-name': 'snap_AIIDE',
+    'plugin-version': '26.9.902',
+    'ide-name': 'VSCode',
+    'ide-version': '26.9.902',
+    'created-time': new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    'user-msg-id': `msg_${crypto.randomBytes(6).toString('hex')}`,
+    'x-ot-session-id': sessionId,
+    'x-ot-parent-session-id': '',
+    'user-session-id': sessionId,
+    ...(model ? { 'model-id': model, 'model-name': model } : {}),
   };
 }
 
@@ -208,7 +231,8 @@ export function createCodeartsPool({
     accounts,
     settings: {
       ...(config.poolSettings || {}),
-      ...(config.maxInFlight != null ? { maxInFlight: config.maxInFlight } : {}),
+      // 上游硬限制：每个账号最多 3 个并发会话（TM.00001041）。超过只会排队失败。
+      maxInFlight: config.maxInFlight ?? Math.min(config.poolSettings?.maxInFlight ?? 3, 3),
       ...(config.maxAttempts != null ? { maxAttempts: config.maxAttempts } : {}),
     },
     settingsFile: config.settingsFile,
@@ -299,10 +323,11 @@ export function createCodeartsPool({
       }
 
       const payload = buildCaPayload(body, upstreamModel, chatId);
-      const headers = chatHeadersV2(cred.securityToken, crypto.randomUUID());
-      if (catalog.isBenefit(accountKeyOf(acc), upstreamModel)) {
-        headers[HEADER_MAAS_TYPE] = MAAS_BENEFIT; // 签名前写入，计入 SignedHeaders
-      }
+      const sessionId = upstreamSessionId(acc, cred);
+      const headers = chatHeadersV2(cred.securityToken, crypto.randomUUID(), {
+        model: upstreamModel,
+        sessionId,
+      });
       const signed = signRequest({ method: 'POST', url: chatUrl, headers, body: JSON.stringify(payload) }, cred);
       // vendor client.go:566-571：签名之后设置，不进 SignedHeaders；prompt cache 亲和 + 会话标识
       signed['chat-id'] = chatId;

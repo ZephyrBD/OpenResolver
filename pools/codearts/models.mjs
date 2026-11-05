@@ -25,25 +25,27 @@ import { signRequest } from './signer.mjs';
 export const CATALOG_TTL_MS = 3_600_000;
 export const SRC_FAIL_COOLDOWN_MS = 5 * 60_000;
 
-// 冷启动种子（models.go:53-62）：福利套餐轮换后新增模型在首次发现前也走福利路由。
-// deepseek-v4-flash-0731 / deepseek-v4-pro-0813 已从当前账号的 builtin 目录下架，
-// 留在种子里会给上游发 maas_type: benefit → TM.000010051。
-export const SEED_BENEFIT_MODELS = ['glm-5.3-flash'];
+// 冷启动种子：仅在首次发现成功前使用。ID 必须是上游 builtin 的 model_id
+// （上游区分大小写，用显示名会报 TM.000010051 无权调用）。
+// 2026-10 起免费权益（benefit）通道整体下线，不再有 benefit 种子。
+export const SEED_BENEFIT_MODELS = [];
 export const SEED_KNOWN_MODELS = [
-  'GLM-5.2', 'GLM-5.2-ArkTS-SPARK', 'GLM-5.1', 'GLM-4.7',
-  'OpenPangu-2.0-Pro', 'OpenPangu-2.0-Flash',
-  'Qwen3-VL-235B', 'Qwen3.5-397B-A17B-VL', 'Qwen3.6-27B-VL',
+  'glm-5.3', 'GLM-5.2', 'glm-5.2-sft-harmony',
+  'openpangu-2.0-pro', 'openpangu-2.0-flash',
+  'deepseek-v4.1-flash', 'deepseek-v4.1-flash-1017',
+  'Qwen3-VL-235B', 'kimi-k2.6-vl', 'kimi-k3', 'kimi-k3.1-pro', 'speed',
 ];
 
 // CanonicalModel 静态别名兜底（client.go:418-438；动态 known 索引优先）。
 const STATIC_ALIASES = {
   'snap-chat': 'GLM-5.2',
   'glm-5.2': 'GLM-5.2',
-  'glm-5.1': 'GLM-5.1',
-  'glm-4.7': 'GLM-4.7',
+  'glm-5.3': 'glm-5.3',
+  'glm-5.3-flash': 'glm-5.3-flash',
+  'glm-5.2-arkts-spark': 'glm-5.2-sft-harmony',
+  '智速模式': 'speed',
   'qwen3-vl-235b': 'Qwen3-VL-235B',
-  'qwen3.5-397b-a17b-vl': 'Qwen3.5-397B-A17B-VL',
-  'qwen3.6-27b-vl': 'Qwen3.6-27B-VL',
+  'kimi-k2.6-vl': 'kimi-k2.6-vl',
 };
 
 const firstNonEmpty = (...values) => values.find((v) => v != null && v !== '') ?? '';
@@ -154,7 +156,9 @@ export function createCodeartsModelCatalog({
     return seedBenefit.has(key);
   }
 
-  // MergeModels（models.go:228-256）：按小写 ID 去重，福利取或，参数全的优先。
+  // MergeModels（models.go:228-256）：按小写 ID 去重。
+  // ID 优先取 builtin 来源：上游校验 model-id 与请求体完全一致，而 agent
+  // 详情里给的是显示名（如 GLM-5.3-Flash），直接用会报 TM.000010051。
   function mergeModels(sets) {
     const merged = new Map();
     for (const set of sets) {
@@ -166,25 +170,16 @@ export function createCodeartsModelCatalog({
           merged.set(key, { ...mi });
           continue;
         }
-        const benefit = cur.benefit || mi.benefit;
-        const better = mi;
-        const worse = cur;
-        const keep =
-          (better.context_window > 0) !== (worse.context_window > 0)
-            ? better.context_window > 0
-              ? better
-              : worse
-            : better.id !== better.id.toLowerCase() && worse.id === worse.id.toLowerCase()
-              ? better
-              : worse;
-        const drop = keep === better ? worse : better;
+        const preferIncoming = mi.source === 'builtin' && cur.source !== 'builtin';
         merged.set(key, {
-          ...keep,
-          benefit,
-          name: keep.name || drop.name,
-          context_window: keep.context_window || drop.context_window,
-          max_tokens: keep.max_tokens || drop.max_tokens,
-          desc: keep.desc || drop.desc,
+          ...cur,
+          id: preferIncoming ? mi.id : cur.id,
+          name: preferIncoming ? mi.name || mi.id : cur.name || cur.id,
+          source: preferIncoming ? 'builtin' : cur.source,
+          benefit: Boolean(cur.benefit || mi.benefit),
+          context_window: Math.max(cur.context_window || 0, mi.context_window || 0),
+          max_tokens: Math.max(cur.max_tokens || 0, mi.max_tokens || 0),
+          desc: cur.desc || mi.desc,
         });
       }
     }
@@ -228,6 +223,7 @@ export function createCodeartsModelCatalog({
         ? {
             id,
             name: id,
+            source: 'agent',
             context_window: Number(m.model_parameters?.context_window ?? 0),
             max_tokens: Number(m.model_parameters?.max_tokens ?? 0),
             desc: m.model_parameters?.model_desc ?? '',
@@ -245,7 +241,14 @@ export function createCodeartsModelCatalog({
       const infos = (out?.builtinModels ?? []).map((m) => {
         const id = firstNonEmpty(m.model_id, m.model_name);
         return id
-          ? { id, name: id, context_window: Number(m.context_window ?? 0), max_tokens: Number(m.max_tokens ?? 0), desc: m.model_desc ?? '' }
+          ? {
+              id,
+              name: firstNonEmpty(m.model_name, id),
+              source: 'builtin',
+              context_window: Number(m.context_window ?? 0),
+              max_tokens: Number(m.max_tokens ?? 0),
+              desc: m.model_desc ?? '',
+            }
           : null;
       }).filter(Boolean);
       clearSrcFail(key);
@@ -291,6 +294,7 @@ export function createCodeartsModelCatalog({
         return id
           ? {
               id, name: id,
+              source: 'benefit',
               context_window: Number(m.context_window ?? 0),
               max_tokens: Number(m.max_tokens ?? 0),
               desc: m.model_desc ?? '',
@@ -317,26 +321,49 @@ export function createCodeartsModelCatalog({
     };
     const accountId = accountKeyOf(acc);
     const sets = [];
+    let agentModels = [];
+    let builtinModels = [];
+    let benefitModels = [];
     let agentOk = false;
     try {
-      sets.push(await fetchAgentModels(cred));
+      agentModels = await fetchAgentModels(cred);
       agentOk = true;
     } catch {
       /* 单路失败只降级 */
     }
     let builtinOk = false;
     try {
-      sets.push(await fetchBuiltinModels(accountId, cred));
+      builtinModels = await fetchBuiltinModels(accountId, cred);
       builtinOk = true;
     } catch {
       /* 同上 */
     }
     let benefitOk = false;
     try {
-      sets.push(await fetchBenefitModels(accountId, cred));
+      benefitModels = await fetchBenefitModels(accountId, cred);
       benefitOk = true;
     } catch {
       /* 同上 */
+    }
+
+    // builtin 是唯一权威的可调用清单：其 model_id 可直接当请求体的 model。
+    // agent 详情给的是显示名（GLM-5.3-Flash / 智速模式），只能按 id 或显示名
+    // 映射回 builtin ID 后再合并，绝不能作为独立模型暴露给客户端。
+    if (builtinOk && builtinModels.length) {
+      const byId = new Map(builtinModels.map((m) => [m.id.toLowerCase(), m]));
+      const byName = new Map(
+        builtinModels.filter((m) => m.name).map((m) => [String(m.name).toLowerCase(), m]),
+      );
+      const mappedAgent = agentModels
+        .map((m) => {
+          const target = byId.get(m.id.toLowerCase()) || byName.get(String(m.name || m.id).toLowerCase());
+          return target ? { ...m, id: target.id, name: target.name || m.name } : m;
+        })
+        .filter((m) => byId.has(m.id.toLowerCase()));
+      sets.push(mappedAgent, builtinModels);
+      if (benefitOk && benefitModels.length) sets.push(benefitModels);
+    } else {
+      sets.push(agentModels, builtinModels, benefitModels);
     }
     const merged = mergeModels(sets);
     if (!merged.length) {
