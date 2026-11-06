@@ -13,7 +13,6 @@ import {
 } from './adapters/openai-to-anthropic.mjs';
 import { createSseParser } from './adapters/sse-reader.mjs';
 import { createUsageRecorder } from './panel/usage.mjs';
-import { DEFAULT_SETTINGS } from './pools/settings.mjs';
 
 const EMPTY_DB = { version: 1, keys: [] };
 
@@ -107,58 +106,42 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
     return sendJson(res, 200, { object: 'list', data });
   };
 
-  /**
-   * 池名 → 折算比率（credits→token）。zcode/trae 明细本身就是 token（×1）；
-   * workbuddy/qoder/codearts 的明细是 credit，各自可配折算率。
-   */
-  const creditRateOf = (poolName, settings) => {
-    if (poolName === 'codearts')
-      return settings.codeartsCreditTokensRate ?? DEFAULT_SETTINGS.codeartsCreditTokensRate;
-    if (poolName === 'workbuddy' || poolName === 'workbuddy-cn')
-      return settings.wbCreditTokensRate ?? DEFAULT_SETTINGS.wbCreditTokensRate;
-    if (poolName === 'qoder' || poolName === 'qoder-cn')
-      return settings.qoderCreditTokensRate ?? DEFAULT_SETTINGS.qoderCreditTokensRate;
-    return 1;
-  };
+  /** 池子自身的额度单位：明细就是 token 的池，其余按 credit 原样输出。 */
+  const unitOf = (poolName) => (poolName === 'zcode' || poolName === 'trae' ? 'token' : 'credit');
 
-  /** GET /user/balance：全池折算 token 剩余（cc-switch 轮询余额用）。 */
+  /** GET /v1/pool/balance：按池汇总 enabled 账号的原始剩余/总额度（不折算，只遍历 key 可见的池）。 */
   const handleBalance = async (req, res) => {
-    authorize({ secret: extractSecret(req.headers), ip: clientIp(req), db, config });
-    // 比率取自池设置全局（面板 PATCH /api/settings 广播到所有池，读任意一份即可）
-    const head = pools[0];
-    const scheduler = head?.scheduler ?? head;
-    const settings = scheduler && typeof scheduler === 'object' && scheduler.settings ? scheduler.settings : {};
-    const credited = {};
-    let balance = 0;
-    for (const pool of pools) {
-      let tokens = 0;
-      const rate = creditRateOf(pool.name, settings);
-      if (rate > 0 && typeof pool.quota?.get === 'function') {
-        let credits = 0;
+    const key = authorize({ secret: extractSecret(req.headers), ip: clientIp(req), db, config }).key;
+    const list = [];
+    for (const pool of visiblePools(pools, key)) {
+      let balance = 0;
+      let total = null;
+      let accounts = 0;
+      let ok = 0;
+      if (typeof pool.quota?.get === 'function') {
         for (const acc of pool.accounts || []) {
           if (acc?.enabled === false) continue;
+          accounts++;
           try {
             const q = await pool.quota.get(acc);
             for (const d of q?.details ?? []) {
               const remaining = Number(d?.remaining); // null → 0，NaN → 跳过
-              if (Number.isFinite(remaining)) credits += remaining;
+              if (Number.isFinite(remaining)) balance += remaining;
+              const raw = d?.total; // null/undefined → 缺失；非有限数 → 不计入
+              if (raw != null) {
+                const t = Number(raw);
+                if (Number.isFinite(t)) total = (total ?? 0) + t;
+              }
             }
+            ok++;
           } catch {
             // 单账号回源失败贡献 0：绝不拖垮路由，也绝不外泄秘钥
           }
         }
-        if (Number.isFinite(credits)) tokens = Math.round(credits * rate);
       }
-      credited[pool.name] = tokens;
-      balance += tokens;
+      list.push({ name: pool.name, unit: unitOf(pool.name), balance, total, accounts, ok });
     }
-    return sendJson(res, 200, {
-      is_active: true,
-      balance,
-      unit: 'token',
-      fetched_at: Date.now(),
-      pools: credited,
-    });
+    return sendJson(res, 200, { fetched_at: Date.now(), pools: list });
   };
 
   const handleMessages = async (req, res, url) => {
@@ -283,17 +266,15 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
       if (req.method === 'GET' && url.pathname === '/health') {
         return sendJson(res, 200, { ok: true, version, pools: pools.map((p) => p.name) });
       }
-      // /user/balance 是推理面路由（Bearer zsk_ 认证），必须放在面板分支之前：
-      // 面板分支按 `!pathname.startsWith('/v1/')` 抢占，放进去会被面板 404 吞掉。
-      if (req.method === 'GET' && url.pathname === '/user/balance') {
-        return await handleBalance(req, res);
-      }
       if (panel && !url.pathname.startsWith('/v1/')) {
         // 面板面：/、/panel/*、/auth/*、/api/*，其余由面板侧统一 404
         return panel.handle(req, res);
       }
       if (req.method === 'GET' && url.pathname === '/v1/models') {
         return handleModels(req, res);
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/pool/balance') {
+        return await handleBalance(req, res);
       }
       if (req.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
         return await handleCountTokens(req, res);

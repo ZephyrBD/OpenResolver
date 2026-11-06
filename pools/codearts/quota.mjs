@@ -6,11 +6,11 @@
 //
 // 缓存语义与其它池一致：5min TTL、失败 60s 起翻倍封顶 5min 退避、invalidate 清条目；
 // 失败时保留上一轮 details/ratio/checkin（source=stale），首败 source=unknown。
-// details 只输出分类行（基础/按需/赠送），不叠加总额行——/user/balance 会
+// details 只输出分类行（基础/按需/赠送），不叠加总额行——/v1/pool/balance 会
 // sum details[].remaining，叠行就是双计；分类缺失或与总额不自洽时退回单条总额行。
 //
 // 凭证：STS 只有 ~2h 有效期，额度/签到查询也必须走 token 管理器刷新（credsOf 注入），
-// 否则 grant 过期后 /user/balance 与面板额度会一直 401/0，直到某次 chat dispatch 顺手刷新。
+// 否则 grant 过期后 /v1/pool/balance 与面板额度会一直 401/0，直到某次 chat dispatch 顺手刷新。
 
 import { fetchCreditCampaigns } from './checkin.mjs';
 import { fetchCreditInfo, CREDIT_PATH } from './credit.mjs';
@@ -79,7 +79,7 @@ function detailsFrom(info) {
   }
   const total = Number(info.total) || 0;
   // 分类缺失（如只回总额指标）或求和与总额对不上时不输出分类行：
-  // /user/balance 按 details 求和，额度条按 remaining/total，两条口径必须同源。
+  // /v1/pool/balance 按 details 求和，额度条按 remaining/total，两条口径必须同源。
   if (rows.length && Math.abs(categoryTotal - total) <= 0.5) return rows;
   return [
     {
@@ -165,7 +165,7 @@ export function createCodeartsQuotaCache({
   }
 
   async function attempt(acc, key) {
-    // /user/balance 串行 await 每个账号的 get()：两路上游共用同一个超时预算，
+    // /v1/pool/balance 串行 await 每个账号的 get()：两路上游共用同一个超时预算，
     // 否则一个卡死的端点会把 cc-switch 轮询和面板 quota 路由拖到 undici 默认 ~300s。
     const signal = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
     // 凭证只解析一次（token 管理器内部单飞），两路并行共用同一组 AK/SK/STS。

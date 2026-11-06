@@ -1,0 +1,21 @@
+{
+  "name": "ugw-pool-balance",
+  "version": "0.1.0",
+  "description": "OpenResolver 统一网关各池余额，常驻显示在 OpenCode TUI 底部状态区",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./tui": "./src/tui.tsx"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "latest"
+  },
+  "peerDependencies": {
+    "@opentui/core": "latest",
+    "@opentui/solid": "latest",
+    "solid-js": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6"
+  }
+}

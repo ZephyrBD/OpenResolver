@@ -398,7 +398,7 @@ test('codearts：statistics/plugin → 积分套餐明细 + ratio + 活动 check
   assert.equal(result.details[2].percent, null, 'total=0 时 percent 为 null');
   assert.deepEqual(result.checkin, { checkedIn: false, credits: 70, message: '' });
   assert.equal(quota.peek({ id: 'c1' }), 0.75);
-  // 只取分类行，不得再叠加一条总额行（/user/balance 会 sum details.remaining）
+  // 只取分类行，不得再叠加一条总额行（/v1/pool/balance 会 sum details.remaining）
   assert.equal(result.details.reduce((sum, d) => sum + d.remaining, 0), 750);
 
   // 身份头/session/签名形态（brief 逐字锁定）
@@ -716,7 +716,7 @@ test('codearts quota：分类合计与总额不一致 → 退回单条总额行'
   const quota = createCodeartsQuotaCache({ snapBase: stub.origin });
   const result = await quota.get({ id: 'cMismatch', accessKeyID: 'ak', secretAccessKey: 'sk', securityToken: 'st' });
 
-  // 分类 Σ=600 ≠ 总额 1000 → 单条总额行，避免额度条与 /user/balance 口径分叉
+  // 分类 Σ=600 ≠ 总额 1000 → 单条总额行，避免额度条与 /v1/pool/balance 口径分叉
   assert.deepEqual(result.details.map((d) => [d.name, d.remaining, d.total]), [['混合套餐', 750, 1000]]);
 });
 

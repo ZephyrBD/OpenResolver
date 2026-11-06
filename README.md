@@ -53,7 +53,7 @@ Claude Code / OpenAI SDK / cc-switch
              各平台上游 API（非官方）
 ```
 
-面板与推理面共用同一个端口：`/v1/*` 与 `/user/balance` 走推理鉴权，其余路径走面板会话。
+面板与推理面共用同一个端口：`/v1/*`（含 `/v1/pool/balance`）走推理鉴权，其余路径走面板会话。
 
 ---
 
@@ -129,7 +129,7 @@ Model:    <pool>/<model>，例如 trae/DeepSeek-V4-Flash
 | `POST` | `/v1/messages` | Anthropic Messages，支持非流式与 SSE 流式 |
 | `POST` | `/v1/messages/count_tokens` | 本地 token 估算（Claude Code 会调用） |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions（非流式） |
-| `GET` | `/user/balance` | cc-switch 余额接口，把各池额度折算成 token |
+| `GET` | `/v1/pool/balance` | 按池汇总余额接口，输出各池原始额度与账号健康数 |
 | `GET` | `/` | 管理面板（`/panel/*`、`/api/*`、`/auth/*`） |
 
 调用示例：
