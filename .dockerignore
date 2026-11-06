@@ -1,0 +1,22 @@
+# 机密：账号凭证、密钥、会话，绝不能进镜像
+data/
+unused-smoke-data/
+.env
+*.log
+
+# 开发产物
+.git/
+.gitattributes
+.superpowers/
+.playwright-cli/
+test/
+refer/
+node_modules/
+Dockerfile
+docker-compose*.yml
+
+# 文档与无关文件
+README.md
+Design-md.md
+LICENSE
+*.md

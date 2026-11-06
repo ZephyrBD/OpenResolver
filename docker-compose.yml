@@ -1,0 +1,47 @@
+# OpenResolver · docker compose
+#   1) 首次部署：cp .env.example .env，填 UGW_ADMIN_PASSWORD
+#   2) docker compose up -d
+#   3) 面板 http://<host>:8790
+services:
+  openresolver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openresolver:latest
+    container_name: openresolver
+    restart: unless-stopped
+    ports:
+      # 只给本机用时改成 127.0.0.1:8790:8790，避免把面板暴露到公网
+      - "${OR_PORT:-8790}:8790"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8790
+      UGW_DATA_DIR: /app/data
+      TZ: ${TZ:-Asia/Shanghai}
+      # 仅在 data/admin.json 不存在时生效，写入后该变量可删
+      UGW_ADMIN_PASSWORD: ${UGW_ADMIN_PASSWORD:-}
+      # 0 = 没有密钥时也只放行回环地址（容器内回环无意义，保留默认 1）
+      UGW_OPEN_MODE: ${UGW_OPEN_MODE:-1}
+      # 反代到 HTTPS 后面板 Cookie 设为 Secure
+      UGW_SECURE_COOKIE: ${UGW_SECURE_COOKIE:-0}
+      UGW_UPSTREAM_TIMEOUT_MS: ${UGW_UPSTREAM_TIMEOUT_MS:-600000}
+      UGW_MAX_ATTEMPTS: ${UGW_MAX_ATTEMPTS:-3}
+      ZCODE_APP_VERSION: ${ZCODE_APP_VERSION:-3.16.3}
+    volumes:
+      # 全部持久化状态：账号、密钥、会话、用量、签到。迁移 = 整目录拷走
+      - ./data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8790/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
