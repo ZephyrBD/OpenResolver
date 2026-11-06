@@ -149,22 +149,24 @@ function getJson(target: URL, headers: Record<string, string>, timeoutMs = 10_00
 }
 
 async function setup(context: V2Context): Promise<() => void> {
-  // 配置优先级：tui.json 里插件条目的 options > 环境变量 UGW_URL / UGW_KEY > 本机默认值
-  // 默认值为本机排障用（options 传递链路未确认前保证取数可用），确认后可删
-  const DEFAULT_URL = "http://127.0.0.1:8790"
-  const DEFAULT_KEY = "zsk_Z8uM2ZBeJ1htdeyQ_3HGkL_x48R5898y4n5poL7iHo8"
+  // 配置优先级：cli.json 中 plugins[].options > 环境变量 UGW_URL / UGW_KEY
+  // 绝不内置凭据：key 缺失时明确报错，不回落到任何写死的值
   const opt = context.options ?? {}
-  const base = (opt.url || process.env.UGW_URL || DEFAULT_URL).replace(/\/+$/, "")
-  const key = opt.key || process.env.UGW_KEY || DEFAULT_KEY
+  const base = (opt.url || process.env.UGW_URL || "").replace(/\/+$/, "")
+  const key = opt.key || process.env.UGW_KEY || ""
   const intervalMs = opt.intervalMs && opt.intervalMs > 0 ? opt.intervalMs : 60_000
   const warnRatio = typeof opt.warnRatio === "number" ? opt.warnRatio : 0.1
   const barWidth = opt.barWidth && opt.barWidth > 0 ? Math.floor(opt.barWidth) : 8
 
   const [pools, setPools] = createSignal<PoolBalance[]>([])
-  const [failed, setFailed] = createSignal("")
+  const [failed, setFailed] = createSignal(
+    !base ? "配置缺失: url" : !key ? "配置缺失: key" : "",
+  )
   let timer: ReturnType<typeof setInterval> | undefined
 
   async function fetchOnce() {
+    // 缺 url/key 时不发请求：直接显示配置错误，避免误报成连接失败
+    if (!base || !key) return
     try {
       const target = new URL(`${base}/v1/pool/balance`)
       const data = await getJson(target, { Authorization: `Bearer ${key}` })
@@ -204,13 +206,18 @@ async function setup(context: V2Context): Promise<() => void> {
 
   // 侧边栏布局：标题行 + 每池一行（竖排）。
   // 信号读取必须放在 Show/For 的响应式表达式里，分支才不会锁死在首渲染状态
+  // 配置缺失是部署错误而非网络抖动：用 error 色并给出明确文案，不伪装成 gw?
+  const configBroken = () => !base || !key
+
   function SidebarView() {
     return (
       <Show
         when={pools().length > 0}
         fallback={
           <Show when={failed()}>
-            <text fg={context.theme.textMuted}>gw? {failed().slice(0, 40)}</text>
+            <text fg={configBroken() ? context.theme.error : context.theme.textMuted}>
+              {configBroken() ? `ugw ${failed()}` : `gw? ${failed().slice(0, 40)}`}
+            </text>
           </Show>
         }
       >

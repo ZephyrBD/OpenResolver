@@ -30,20 +30,42 @@ CA [████████░] 4.6K/4.6K cr
    ~/.config/opencode/plugins/ugw-pool-balance/src/tui.tsx
    ```
 
-2. 在 `~/.config/opencode/tui.json` 的 `plugin` 数组注册（第二元素为插件 options）：
+2. 在 **`~/.config/opencode/cli.json`** 的 `plugins` 数组注册（`package` 写插件目录，`options` 为该插件的配置）：
 
    ```json
    {
-     "plugin": [
-       ["./plugins/ugw-pool-balance/src/tui.tsx", {
-         "url": "http://127.0.0.1:8790",
-         "key": "zsk_xxxxxxxx"
-       }]
+     "plugins": [
+       {
+         "package": "C:\\Users\\you\\.config\\opencode\\plugins\\ugw-pool-balance",
+         "options": {
+           "url": "https://your-gateway.example.com",
+           "key": "zsk_xxxxxxxx",
+           "intervalMs": 60000,
+           "warnRatio": 0.1,
+           "barWidth": 8
+         }
+       }
      ]
    }
    ```
 
-3. 重启 OpenCode。
+   > **必须是 `cli.json`，不是 `tui.json`。** OpenCode 2.2.x 起 TUI 配置读的是
+   > `~/.config/opencode/cli.json` 的 `plugins` 字段。`tui.json` 只在 `cli.json`
+   > **不存在**时被一次性迁移过去；`cli.json` 一旦已存在，迁移逻辑只修 keybinds
+   > 就提前返回，`tui.json` 里的 `plugin` 永远不会被读入。表现为插件能加载、
+   > 但 `options` 全空（侧边栏显示 `ugw 配置缺失: url`）。
+   >
+   > `plugins` 里**没有** `plugin_enabled` 那种开关形式，每条就是
+   > `{ package, options }`；`package` 可以是插件目录、包名或入口文件的绝对路径。
+
+3. 重启 OpenCode（`cli.json` 与插件源码都不热重载）。
+
+> 必须提供 `key`：插件不内置任何默认凭据。缺 `url` 会在侧边栏显示
+> `ugw 配置缺失: url`，缺 `key` 显示 `ugw 配置缺失: key`（error 色），
+> 这两种情况**不会发起请求**，也不会回落到任何写死的地址或密钥。
+>
+> 看到 `ugw 配置缺失: url` 基本可以直接判定为**配置放错了文件**（写进了
+> `tui.json` 而不是 `cli.json`），而不是网关连不上。
 
 > 插件形状：OpenCode v2（CLI ≥ 2.2.x）要求 TUI 插件默认导出为
 > `{ id: "ugw-pool-balance", setup(context) { ... } }`，slot 通过
@@ -65,7 +87,7 @@ CA [████████░] 4.6K/4.6K cr
 | `warnRatio` | 否 | `0.1` | 剩余比例告警线：ratio = balance/total ≤ warnRatio 时该池整段标红 |
 | `barWidth` | 否 | `8` | 进度条固定宽度（字符数） |
 
-`url` 也可以用环境变量 `UGW_URL` 提供优先级：tui.json options > 环境变量。
+`url` 也可以用环境变量 `UGW_URL` 提供优先级：`cli.json` options > 环境变量。
 
 ## 鉴权
 

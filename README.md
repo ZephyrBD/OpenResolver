@@ -24,6 +24,7 @@ OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的
 | 管理面板 | 仪表盘、账号、密钥、设置四页；原生 JS 零构建，支持浏览器内完成账号接入 |
 | 安全 | 请求体上限、上游总超时、客户端断开即 abort、忽略伪造 XFF、面板 CSRF + 登录限速 |
 | 零依赖 | 仅 Node.js ≥ 22 内置模块，无 npm 运行时依赖 |
+| 容器化 | 官方 `Dockerfile`（`node:22-alpine`）+ `docker compose up -d` 一键部署，`data/` 独立挂载 |
 
 ---
 
@@ -62,9 +63,11 @@ Claude Code / OpenAI SDK / cc-switch
 ### 环境要求
 
 - Node.js **≥ 22**（使用内置 `fetch`、`node:test`、`import.meta.dirname`）
-- Windows / Linux / macOS 均可
+- Windows / Linux / macOS 均可；用 Docker 部署则只需 Docker + Compose
 
 ### 1. 启动
+
+**方式 A：直接跑（需要 Node ≥ 22）**
 
 ```bash
 git clone https://github.com/ZephyrBD/OpenResolver.git
@@ -77,6 +80,24 @@ node tools/admin-passwd.mjs
 npm start
 # 或 PORT=8790 node server.mjs
 ```
+
+**方式 B：Docker Compose（推荐，零依赖）**
+
+```bash
+git clone https://github.com/ZephyrBD/OpenResolver.git
+cd OpenResolver
+
+cp .env.example .env
+# 编辑 .env，至少改掉 UGW_ADMIN_PASSWORD
+
+docker compose up -d
+docker compose logs -f      # 首次启动看日志确认监听 8790
+```
+
+镜像基于 `node:22-alpine`（约 150 MB），零 npm 依赖；`data/` 通过 bind mount 挂进容器，**重建镜像不会丢账号与密钥**。
+
+> `compose` 里 `pull_policy: build` 表示每次 `up` 前重新构建本地镜像，改了代码重跑
+> `docker compose up -d` 即可生效，不会去拉远端同名镜像。
 
 ### 2. 打开面板接入账号
 
@@ -180,6 +201,77 @@ data/
 ```
 
 > **`data/` 属于机密**。`pools/*/accounts.json` 里是可直接使用的上游凭证，不要提交、不要外发；备份请整目录打包并妥善保管。
+
+---
+
+## Docker 部署
+
+### 文件构成
+
+| 文件 | 作用 |
+|---|---|
+| `Dockerfile` | `node:22-alpine` 基础镜像；装 `tzdata`（用量按天分片、签到走本地时区）与 `su-exec`（entrypoint 降权到 `node` 用户）；只拷代码，`data/` 由 `.dockerignore` 排除 |
+| `docker-compose.yml` | 端口映射、环境变量、`./data:/app/data` 挂载、healthcheck、日志轮转 |
+| `.env.example` | 环境变量模板，复制为 `.env` 使用（`.env` 已 gitignore） |
+| `docker-entrypoint.sh` | 以 root 启动时先 `chown -R` 修正挂载目录属主（可用 `PUID`/`PGID` 覆盖默认的 1000），再 `su-exec` 降权；`UGW_ADMIN_PASSWORD` 仅在 `data/admin.json` 不存在时用于初始化 |
+
+### 常用命令
+
+```bash
+docker compose up -d                      # 构建并后台启动
+docker compose logs -f                    # 跟踪日志
+docker compose restart                    # 重启（改环境变量后需要）
+docker compose down                       # 停止并删除容器（data/ 保留在宿主）
+docker compose up -d --build              # 强制重建镜像
+docker compose exec openresolver sh       # 进容器排查
+```
+
+### 端口与反代
+
+默认映射到宿主的 `8790`。只给本机用时，把 `docker-compose.yml` 里的端口改成
+`127.0.0.1:8790:8790`，避免把面板暴露到公网：
+
+```yaml
+ports:
+  - "127.0.0.1:8790:8790"
+```
+
+宿主端口可改 `.env` 里的 `OR_PORT`。部署在 HTTPS 反向代理之后时，把
+`UGW_SECURE_COOKIE=1` 写进 `.env`，否则面板会话 Cookie 不会带 `Secure`。
+
+### 健康检查
+
+镜像内置 `HEALTHCHECK`（30s 间隔，15s 启动宽限），compose 另有一份等价配置；
+两者都请求容器内 `/health`：
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' openresolver   # healthy
+```
+
+### 数据持久化与迁移
+
+所有状态都在宿主的 `./data`（容器内 `/app/data`）：
+
+```bash
+tar -czf openresolver-data.tar.gz data/      # 备份
+# 换机器：拷走 data/ 覆盖过去，再 docker compose up -d 即可
+```
+
+> 镜像只包含网关本体（`*.mjs` 与 `adapters/ auth/ http/ identity/ panel/ pools/ profile/ tools/`）。
+> `plugins/opencode/` 是给 OpenCode TUI 用的**客户端插件**，不在镜像里，需单独装到本机。
+
+> 容器内的 `trae` 登录工具依赖 `../data` 路径，镜像里 `/app/data` 与挂载点**刻意重合**，
+> 不要随意改 `UGW_DATA_DIR`，否则该工具的临时路径会失配。
+
+### 常见问题
+
+| 现象 | 原因与处理 |
+|---|---|
+| 启动即退出，日志提示无权限写 `/app/data` | 挂载目录属主不对。entrypoint 会自动 `chown`，若宿主开了 user namespace remapping 需手动改属主 |
+| 面板能开但接口 401，且回环也不通 | 没配 `UGW_ADMIN_PASSWORD` 且 `data/admin.json` 不存在；或 `UGW_OPEN_MODE=0` —— 容器内回环无意义，保持默认 `1` |
+| 用量记录日期不对 / 签到时间偏移 | 容器与宿主时区不一致，改 `.env` 的 `TZ`（默认 `Asia/Shanghai`） |
+| 改了代码但行为没变 | `pull_policy: build` 只在 `up` 时重建，用 `docker compose up -d --build` 强制刷新 |
+| 日志占满磁盘 | compose 已配 `json-file` 轮转（`max-size: 10m`，`max-file: 3`），自行改 `logging` 时保留这两项 |
 
 ---
 

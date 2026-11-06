@@ -8,6 +8,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: openresolver:latest
+    pull_policy: build
     container_name: openresolver
     restart: unless-stopped
     ports:
