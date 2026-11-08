@@ -4,6 +4,7 @@ import { HttpError } from '../../http/errors.mjs';
 import { deviceIdFor, sessionIdFor } from '../../fingerprint.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { DEFAULT_SETTINGS } from '../settings.mjs';
+import { sseBodyChannel } from '../event-channel.mjs';
 import { buildUpstreamBody } from './upstream.mjs';
 import { createQuotaCache } from './quota.mjs';
 
@@ -239,6 +240,10 @@ export function createZcodePool({
       if (upstream.ok) {
         scheduler.onSuccess(acc);
         if (stickyKey) scheduler.stickySet(stickyKey, acc);
+        if (collect === 'stream') {
+          // 上游就是 Anthropic SSE：逐帧解出事件对象交给网关，不落盘不聚合
+          return { status: upstream.status, contentType, events: sseBodyChannel(upstream.body) };
+        }
         if (collect) {
           const text = await upstream.text();
           return { status: upstream.status, contentType, bodyText: text };
@@ -267,6 +272,11 @@ export function createZcodePool({
     return dispatch({ ...args, collect: true });
   }
 
+  /** 流式收集：不写 res，增量产出 Anthropic 事件对象，供 /v1/chat/completions 流式转换。 */
+  function sendStream(args) {
+    return dispatch({ ...args, collect: 'stream' });
+  }
+
   return {
     name: 'zcode',
     type: 'pool',
@@ -291,6 +301,7 @@ export function createZcodePool({
       ]).map((m) => ({ ...m, upstream_model: m.id, verified: true })),
     send,
     sendCollect,
+    sendStream,
     quota,
   };
 }

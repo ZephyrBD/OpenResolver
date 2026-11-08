@@ -1,7 +1,8 @@
 /**
  * 入站 OpenAI Chat Completions → 上游 Anthropic Messages（zcode 池用），
  * 以及反方向：Anthropic message JSON / SSE 流 → OpenAI chat.completion。
- * 流式聚合只产出完整对象；网关侧负责喂 SSE 事件。
+ * 非流式聚合只产出完整对象；流式走 anthropicEventsToOpenaiChunks 逐帧转 chunk。
+ * 网关侧负责喂 SSE 事件。
  */
 import { HttpError } from '../http/errors.mjs';
 
@@ -159,6 +160,82 @@ export function anthropicToChatCompletion(messageJson, model) {
     choices: [{ index: 0, message, finish_reason: STOP_REASON[messageJson?.stop_reason] ?? null }],
     usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
   };
+}
+
+/**
+ * Anthropic 事件流 → OpenAI chat.completion.chunk 对象流（网关逐个写成 SSE data 帧）。
+ * thinking 块丢弃；tool_use 块按出现顺序映射成 OpenAI tool_calls 的 index；
+ * message_stop 时产出 finish_reason 帧，带 usage 时再补一帧 choices:[] 的 usage（include_usage 风格）。
+ * 事件元素既接受对象也接受 SSE data 的 JSON 字符串。
+ */
+export async function* anthropicEventsToOpenaiChunks(eventStream, model) {
+  const created = Math.floor(Date.now() / 1000);
+  let id = 'chatcmpl-gateway';
+  let toolIndex = -1;
+  let finishReason = null;
+  let usage = null;
+  let roleSent = false;
+
+  const chunkOf = (delta, finish = null) => ({
+    id,
+    object: 'chat.completion.chunk',
+    created,
+    model,
+    choices: [{ index: 0, delta, finish_reason: finish }],
+  });
+
+  for await (const ev of eventStream) {
+    const json = typeof ev === 'string' ? safeJson(ev) : ev;
+    if (!json?.type) continue;
+
+    if (json.type === 'message_start') {
+      id = json.message?.id ?? id;
+      const u = json.message?.usage;
+      if (u) usage = { prompt_tokens: u.input_tokens ?? 0, completion_tokens: u.output_tokens ?? 0 };
+      if (!roleSent) {
+        roleSent = true;
+        yield chunkOf({ role: 'assistant', content: '' });
+      }
+    } else if (json.type === 'content_block_start') {
+      const cb = json.content_block ?? {};
+      if (cb.type === 'tool_use') {
+        toolIndex += 1;
+        yield chunkOf({
+          tool_calls: [{ index: toolIndex, id: cb.id, type: 'function', function: { name: cb.name ?? '', arguments: '' } }],
+        });
+      }
+    } else if (json.type === 'content_block_delta') {
+      const d = json.delta ?? {};
+      if (d.type === 'text_delta' && d.text) yield chunkOf({ content: d.text });
+      else if (d.type === 'input_json_delta' && d.partial_json) {
+        yield chunkOf({ tool_calls: [{ index: toolIndex, function: { arguments: d.partial_json } }] });
+      }
+      // thinking_delta / signature_delta 丢弃
+    } else if (json.type === 'message_delta') {
+      if (json.delta?.stop_reason) finishReason = STOP_REASON[json.delta.stop_reason] ?? null;
+      const u = json.usage;
+      if (u) {
+        usage = {
+          prompt_tokens: u.input_tokens ?? usage?.prompt_tokens ?? 0,
+          completion_tokens: u.output_tokens ?? usage?.completion_tokens ?? 0,
+        };
+      }
+    } else if (json.type === 'message_stop') {
+      yield chunkOf({}, finishReason);
+      if (usage) {
+        yield {
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [],
+          usage: { ...usage, total_tokens: (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0) },
+        };
+      }
+    } else if (json.type === 'error') {
+      throw new HttpError(502, json.error?.message ?? '上游流内返回错误', { type: 'api_error' });
+    }
+  }
 }
 
 /**

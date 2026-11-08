@@ -14,6 +14,7 @@
 import path from 'node:path';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
+import { createEventChannel } from '../event-channel.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 import { endpointFor, poolNameFor, CHAT_PATH } from './constants.mjs';
 import { authHeaders, loadIdentitySeed } from './headers.mjs';
@@ -295,6 +296,8 @@ export function createWorkbuddyPool({
 
       // HTTP 200：标准 OpenAI SSE（流内业务信封也在 consumeWbSse 冒出）。collect / 非流式可安全重试。
       const streaming = !collect && body.stream === true;
+      const streamCollect = collect === 'stream';
+      const channel = streamCollect ? createEventChannel() : null;
       let wrote = false;
       const events = [];
       try {
@@ -307,6 +310,7 @@ export function createWorkbuddyPool({
           signal,
           onEvents: (batch) => {
             events.push(...batch);
+            if (channel) channel.push(batch);
             if (streaming) {
               for (const ev of batch) {
                 res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
@@ -315,6 +319,11 @@ export function createWorkbuddyPool({
           },
         });
       } catch (err) {
+        if (channel) {
+          // 流式收集：一旦开始消费就不重试，错误抛进迭代器由网关收尾
+          channel.fail(err);
+          return { status: 200, contentType: 'text/event-stream', events: channel };
+        }
         if (err instanceof WbStreamError) {
           // 流内业务信封：code>=500 按上游错误（可换号重试）分类，其余按 HTTP 语义
           const syntheticStatus = err.biz.code >= 500 ? 500 : 200;
@@ -355,6 +364,10 @@ export function createWorkbuddyPool({
       scheduler.onSuccess(acc);
       if (stickyKey) scheduler.stickySet(stickyKey, acc);
 
+      if (channel) {
+        channel.end();
+        return { status: 200, contentType: 'text/event-stream', events: channel };
+      }
       if (streaming) {
         res.end();
         return;
@@ -377,6 +390,11 @@ export function createWorkbuddyPool({
 
   function sendCollect(args) {
     return dispatch({ ...args, collect: true });
+  }
+
+  /** 流式收集：不写 res，增量产出 Anthropic 事件，供 /v1/chat/completions 流式转换。 */
+  function sendStream(args) {
+    return dispatch({ ...args, collect: 'stream' });
   }
 
   return {
@@ -402,5 +420,6 @@ export function createWorkbuddyPool({
     ratelimit,
     send,
     sendCollect,
+    sendStream,
   };
 }

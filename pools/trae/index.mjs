@@ -11,6 +11,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
+import { createEventChannel } from '../event-channel.mjs';
 import { createSseParser } from '../../adapters/sse-reader.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 import { DEFAULT_CHAT_HOST, DEFAULT_API_HOST, EP_EXCHANGE } from './constants.mjs';
@@ -288,6 +289,8 @@ export function createTraePool({
 
       // HTTP 200 + 私有 SSE（流内业务错误也在这里冒出）。collect / 非流式可安全重试。
       const streaming = !collect && body.stream === true;
+      const streamCollect = collect === 'stream';
+      const channel = streamCollect ? createEventChannel() : null;
       let wrote = false;
       const events = [];
       try {
@@ -300,6 +303,7 @@ export function createTraePool({
           signal,
           onEvents: (batch) => {
             events.push(...batch);
+            if (channel) channel.push(batch);
             if (streaming) {
               for (const ev of batch) {
                 res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
@@ -308,6 +312,11 @@ export function createTraePool({
           },
         });
       } catch (err) {
+        if (channel) {
+          // 流式收集：一旦开始消费就不重试，错误抛进迭代器由网关收尾
+          channel.fail(err);
+          return { status: 200, contentType: 'text/event-stream', events: channel };
+        }
         const cls = err instanceof TraeStreamError ? err.cls : null;
         if (cls && cls.kind === 'client' && !cls.retryable) {
           // 请求级（4001 / 输入过大）：不记失败、不冷却
@@ -335,6 +344,10 @@ export function createTraePool({
       scheduler.onSuccess(acc);
       if (stickyKey) scheduler.stickySet(stickyKey, acc);
 
+      if (channel) {
+        channel.end();
+        return { status: 200, contentType: 'text/event-stream', events: channel };
+      }
       if (streaming) {
         res.end();
         return;
@@ -359,6 +372,11 @@ export function createTraePool({
     return dispatch({ ...args, collect: true });
   }
 
+  /** 流式收集：不写 res，增量产出 Anthropic 事件，供 /v1/chat/completions 流式转换。 */
+  function sendStream(args) {
+    return dispatch({ ...args, collect: 'stream' });
+  }
+
   return {
     name,
     type: 'pool',
@@ -380,5 +398,6 @@ export function createTraePool({
     quota,
     send,
     sendCollect,
+    sendStream,
   };
 }

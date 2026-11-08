@@ -82,7 +82,9 @@ export function createSseParser() {
 export async function* sseEvents(source) {
   const parser = createSseParser();
   for await (const chunk of source) {
-    const events = parser.push(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+    // web 流的 chunk 是裸 Uint8Array，没有 Buffer 的 toString(encoding)
+    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString('utf8');
+    const events = parser.push(text);
     for (const ev of events) yield ev;
   }
   for (const ev of parser.drain()) yield ev;

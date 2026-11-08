@@ -171,8 +171,8 @@ async function apiDialogContent(body) {
       `curl ${base}/v1/messages \\\n  -H "Authorization: Bearer zsk_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${models.data[0]?.id ?? 'zcode/GLM-5.3'}","max_tokens":1024,"messages":[{"role":"user","content":"你好"}]}'`],
     ['/v1/messages 流式（SSE）',
       `curl ${base}/v1/messages \\\n  -H "Authorization: Bearer zsk_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${models.data[0]?.id ?? 'zcode/GLM-5.3'}","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"你好"}]}'`],
-    ['/v1/chat/completions（OpenAI 兼容，messages 数组）',
-      `curl ${base}/v1/chat/completions \\\n  -H "Authorization: Bearer zsk_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${models.data[0]?.id ?? 'zcode/GLM-5.3'}","messages":[{"role":"user","content":"你好"}]}'`],
+    ['/v1/chat/completions（OpenAI 兼容，stream:true 流式）',
+      `curl ${base}/v1/chat/completions \\\n  -H "Authorization: Bearer zsk_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${models.data[0]?.id ?? 'zcode/GLM-5.3'}","stream":true,"messages":[{"role":"user","content":"你好"}]}'`],
   ];
   for (const [title, cmd] of examples) {
     const pre = el('pre', { class: 'code' });

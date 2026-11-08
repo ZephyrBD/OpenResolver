@@ -10,6 +10,7 @@ import {
   chatCompletionsToMessages,
   anthropicToChatCompletion,
   aggregateAnthropicSseToChatCompletion,
+  anthropicEventsToOpenaiChunks,
 } from './adapters/openai-to-anthropic.mjs';
 import { createSseParser } from './adapters/sse-reader.mjs';
 import { createUsageRecorder } from './panel/usage.mjs';
@@ -196,11 +197,6 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
 
   const handleChatCompletions = async (req, res, url) => {
     const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-    if (body.stream === true) {
-      throw new HttpError(400, '/v1/chat/completions 暂不支持流式，请设 stream:false', {
-        type: 'invalid_request_error',
-      });
-    }
     const { pool: poolName, model } = routeModel(body.model, poolNames);
     const { key } = authorize({
       secret: extractSecret(req.headers),
@@ -212,7 +208,9 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
     });
 
     const pool = byName.get(poolName);
-    if (typeof pool.sendCollect !== 'function') {
+    const wantsStream = body.stream === true;
+    const requiredMethod = wantsStream ? 'sendStream' : 'sendCollect';
+    if (typeof pool[requiredMethod] !== 'function') {
       throw new HttpError(501, `池 "${poolName}" 暂不支持 /v1/chat/completions`, { type: 'api_error' });
     }
 
@@ -220,7 +218,7 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
     const controller = new AbortController();
     res.on('close', () => controller.abort());
     const startedAt = Date.now();
-    if (usageRecorder.active) {
+    if (usageRecorder.active && !wantsStream) {
       tapResponse(res, (text) => {
         usageRecorder.record({
           pool: poolName,
@@ -232,10 +230,47 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
         });
       });
     }
+    const converted = { ...chatCompletionsToMessages(body), model };
+
+    // 流式：池增量产出 Anthropic 事件，这里边转 OpenAI chunk 边写 SSE，最后补 [DONE]
+    if (wantsStream) {
+      const stream = await pool.sendStream({ req, res, body: converted, key, signal: controller.signal, url });
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
+      let usage = null;
+      try {
+        for await (const chunk of anthropicEventsToOpenaiChunks(stream.events, requestedModel)) {
+          if (chunk.usage) usage = chunk.usage;
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
+      } catch (err) {
+        // SSE 头已发出，只能以错误帧收尾（客户端断开时 res.write 静默失败）
+        res.write(
+          `data: ${JSON.stringify({
+            error: { message: err?.message ?? '上游流中断', type: 'api_error', code: 502 },
+          })}\n\n`,
+        );
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+      if (usageRecorder.active) {
+        usageRecorder.record({
+          pool: poolName,
+          model: requestedModel,
+          keyId: key?.id ?? null,
+          status: res.statusCode,
+          durationMs: Date.now() - startedAt,
+          inputTokens: usage?.prompt_tokens ?? 0,
+          outputTokens: usage?.completion_tokens ?? 0,
+          cacheReadTokens: 0,
+        });
+      }
+      return;
+    }
+
     const collected = await pool.sendCollect({
       req,
       res,
-      body: { ...chatCompletionsToMessages(body), model },
+      body: converted,
       key,
       signal: controller.signal,
       url,

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openaiSseToAnthropicEvents } from '../adapters/anthropic-to-openai.mjs';
+import { anthropicEventsToOpenaiChunks } from '../adapters/openai-to-anthropic.mjs';
 
 function chunk(id, delta, extra = {}) {
   return { id, model: 'gpt-x', choices: [{ index: 0, delta, finish_reason: null, ...extra }], ...extra };
@@ -140,4 +141,59 @@ test('maps finish_reason stop to end_turn and closes an unclosed text block at [
     { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
     { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'bye' } },
   ]);
+});
+
+function anthropicEventSource(events) {
+  return events;
+}
+
+test('anthropicEventsToOpenaiChunks: text 流产出 role/内容/finish/usage 帧', async () => {
+  const source = anthropicEventSource([
+    { type: 'message_start', message: { id: 'msg_1', usage: { input_tokens: 4, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'he' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'llo' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hidden' } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+    { type: 'message_stop' },
+  ]);
+
+  const chunks = await Array.fromAsync(anthropicEventsToOpenaiChunks(source, 'GLM-5.3'));
+
+  assert.equal(chunks.length, 5);
+  assert.ok(chunks.every((c) => c.object === 'chat.completion.chunk' && c.id === 'msg_1' && c.model === 'GLM-5.3'));
+  assert.deepEqual(chunks[0].choices[0].delta, { role: 'assistant', content: '' });
+  assert.equal(chunks[1].choices[0].delta.content, 'he');
+  assert.equal(chunks[2].choices[0].delta.content, 'llo');
+  assert.deepEqual(chunks[3].choices[0].delta, {});
+  assert.equal(chunks[3].choices[0].finish_reason, 'stop');
+  assert.deepEqual(chunks[4].choices, []);
+  assert.deepEqual(chunks[4].usage, { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 });
+});
+
+test('anthropicEventsToOpenaiChunks: tool_use 块按出现顺序映射 tool_calls index，增量拼接 arguments', async () => {
+  const source = anthropicEventSource([
+    { type: 'message_start', message: { id: 'msg_2', usage: { input_tokens: 3, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'call_a', name: 'f1' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"x":' } },
+    { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'call_b', name: 'f2' } },
+    { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{}' } },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+    { type: 'message_stop' },
+  ]);
+
+  const chunks = await Array.fromAsync(anthropicEventsToOpenaiChunks(source, 'GLM-5.3'));
+
+  const deltas = chunks.flatMap((c) => c.choices[0]?.delta?.tool_calls ?? []);
+  assert.deepEqual(
+    deltas.map((tc) => tc.index),
+    [0, 0, 1, 1],
+  );
+  assert.equal(deltas[0].id, 'call_a');
+  assert.equal(deltas[0].function.name, 'f1');
+  assert.equal(deltas[1].function.arguments, '{"x":');
+  assert.equal(deltas[2].id, 'call_b');
+  assert.equal(deltas[3].function.arguments, '{}');
+  const finish = chunks.find((c) => c.choices[0]?.finish_reason);
+  assert.equal(finish.choices[0].finish_reason, 'tool_calls');
 });

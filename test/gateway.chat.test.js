@@ -142,9 +142,36 @@ test('non-stream chat.completions: an upstream SSE body is aggregated into one c
   assert.deepEqual(body.usage, { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 });
 });
 
-test('stream:true is rejected with 400 and a hint', async (t) => {
-  const stub = await startStub(t, () => {
-    throw new Error('不应打到上游');
+test('stream chat.completions: Anthropic SSE 上游被转换成 OpenAI chunk 流（文本 + tool + usage + [DONE]）', async (t) => {
+  const sse = [
+    'event: message_start',
+    'data: {"type":"message_start","message":{"id":"msg_st1","type":"message","role":"assistant","model":"GLM-5.3","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":1}}}',
+    '',
+    'event: content_block_start',
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"he"}}',
+    '',
+    'event: content_block_start',
+    'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_9","name":"get_weather"}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"city\\""}}',
+    '',
+    'event: content_block_delta',
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":":\\"HZ\\"}"}}',
+    '',
+    'event: message_delta',
+    'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":6}}',
+    '',
+    'event: message_stop',
+    'data: {"type":"message_stop"}',
+    '',
+  ].join('\n');
+  const stub = await startStub(t, (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end(sse);
   });
   const { base } = await startGateway(t, { pools: [makePool(stub)] });
 
@@ -153,13 +180,44 @@ test('stream:true is rejected with 400 and a hint', async (t) => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...OPENAI_ASK, stream: true }),
   });
-  const body = await res.json();
 
-  assert.equal(res.status, 400);
-  assert.equal(body.error.type, 'invalid_request_error');
-  assert.match(body.error.message, /暂不支持流式/);
-  assert.match(body.error.message, /stream:false/);
-  assert.equal(stub.requests.length, 0);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+  const text = await res.text();
+  const frames = text
+    .split('\n\n')
+    .filter((f) => f.startsWith('data: '))
+    .map((f) => f.slice(6));
+  assert.equal(frames.at(-1), '[DONE]');
+  const chunks = frames.slice(0, -1).map((f) => JSON.parse(f));
+
+  assert.ok(chunks.every((c) => c.object === 'chat.completion.chunk'), '全部是 chat.completion.chunk');
+  assert.ok(chunks.every((c) => c.id === 'msg_st1'), 'chunk id 沿用上游 message id');
+  assert.deepEqual(chunks[0].choices[0].delta, { role: 'assistant', content: '' });
+
+  const content = chunks
+    .map((c) => c.choices[0]?.delta?.content ?? '')
+    .join('');
+  assert.equal(content, 'he');
+
+  const toolStart = chunks.find((c) => c.choices[0]?.delta?.tool_calls?.[0]?.id === 'call_9');
+  assert.equal(toolStart.choices[0].delta.tool_calls[0].index, 0);
+  assert.equal(toolStart.choices[0].delta.tool_calls[0].function.name, 'get_weather');
+  const args = chunks
+    .flatMap((c) => c.choices[0]?.delta?.tool_calls ?? [])
+    .map((tc) => tc.function?.arguments ?? '')
+    .join('');
+  assert.equal(args, '{"city":"HZ"}');
+
+  const finish = chunks.find((c) => c.choices[0]?.finish_reason != null);
+  assert.equal(finish.choices[0].finish_reason, 'tool_calls');
+
+  const usageChunk = chunks.find((c) => c.usage);
+  assert.deepEqual(usageChunk.usage, { prompt_tokens: 5, completion_tokens: 6, total_tokens: 11 });
+  assert.deepEqual(usageChunk.choices, []);
+
+  assert.equal(stub.requests.length, 1);
+  assert.equal(JSON.parse(stub.requests[0].body).stream, true, '上游按流式请求');
 });
 
 test('chat.completions error shapes match /v1/messages', async (t) => {

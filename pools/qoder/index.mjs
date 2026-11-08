@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
+import { createEventChannel } from '../event-channel.mjs';
 import { createSseParser } from '../../adapters/sse-reader.mjs';
 import { buildAuthHeaders } from './cosy.mjs';
 import { qoderEncodeBody } from './encode.mjs';
@@ -302,6 +303,8 @@ export function createQoderPool({
 
       // HTTP 200 + SSE。collect / 非流式：可以安全重试（客户端还没收到任何字节）。
       const streaming = !collect && body.stream === true;
+      const streamCollect = collect === 'stream';
+      const channel = streamCollect ? createEventChannel() : null;
       let wrote = false;
       const events = [];
       try {
@@ -314,6 +317,7 @@ export function createQoderPool({
           signal,
           onEvents: (batch) => {
             events.push(...batch);
+            if (channel) channel.push(batch);
             if (streaming) {
               for (const ev of batch) {
                 res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
@@ -322,6 +326,11 @@ export function createQoderPool({
           },
         });
       } catch (err) {
+        if (channel) {
+          // 流式收集：一旦开始消费就不重试，错误抛进迭代器由网关收尾
+          channel.fail(err);
+          return { status: 200, contentType: 'text/event-stream', events: channel };
+        }
         const cls = err instanceof QoderUpstreamError ? err.cls : null;
         if (streaming && wrote) {
           res.destroy(); // 已经给客户端写过字节，只能断开
@@ -337,6 +346,10 @@ export function createQoderPool({
       scheduler.onSuccess(acc);
       if (stickyKey) scheduler.stickySet(stickyKey, acc);
 
+      if (channel) {
+        channel.end();
+        return { status: 200, contentType: 'text/event-stream', events: channel };
+      }
       if (streaming) {
         res.end();
         return;
@@ -360,6 +373,11 @@ export function createQoderPool({
   /** 收集聚合后的 Anthropic message JSON（不写 res），供 /v1/chat/completions 协议转换。 */
   function sendCollect(args) {
     return dispatch({ ...args, collect: true });
+  }
+
+  /** 流式收集：不写 res，增量产出 Anthropic 事件，供 /v1/chat/completions 流式转换。 */
+  function sendStream(args) {
+    return dispatch({ ...args, collect: 'stream' });
   }
 
   return {
@@ -386,6 +404,7 @@ export function createQoderPool({
     },
     send,
     sendCollect,
+    sendStream,
     quota,
   };
 }

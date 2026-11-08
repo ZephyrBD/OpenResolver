@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
+import { createEventChannel } from '../event-channel.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 import { messagesToChatCompletions } from '../../adapters/anthropic-to-openai.mjs';
 import { SNAP_ENGINE_API_HOST, BENEFIT_HOST, EP_CHAT_V2 } from './constants.mjs';
@@ -364,6 +365,8 @@ export function createCodeartsPool({
 
       // HTTP 200：OpenAI SSE（流内 error_code 信封也在 consumeCaSse 冒出）。
       const streaming = !collect && body.stream === true;
+      const streamCollect = collect === 'stream';
+      const channel = streamCollect ? createEventChannel() : null;
       let wrote = false;
       const events = [];
       try {
@@ -376,6 +379,7 @@ export function createCodeartsPool({
           signal,
           onEvents: (batch) => {
             events.push(...batch);
+            if (channel) channel.push(batch);
             if (streaming) {
               for (const ev of batch) {
                 res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
@@ -384,6 +388,11 @@ export function createCodeartsPool({
           },
         });
       } catch (err) {
+        if (channel) {
+          // 流式收集：一旦开始消费就不重试，错误抛进迭代器由网关收尾
+          channel.fail(err);
+          return { status: 200, contentType: 'text/event-stream', events: channel };
+        }
         if (err instanceof CaStreamError) {
           const cls = classifyUpstreamError(200, JSON.stringify({ error_code: err.biz.code, error_msg: err.biz.msg }));
           // 请求级客户端错误（如 TM.000010051 模型未开通）不重试、不惩罚账号：
@@ -424,6 +433,10 @@ export function createCodeartsPool({
       // 让 peek() 喂给 scheduler 与 /api/pools 均值，但不增加本次响应延迟。
       quota.get(acc).catch(() => {});
 
+      if (channel) {
+        channel.end();
+        return { status: 200, contentType: 'text/event-stream', events: channel };
+      }
       if (streaming) {
         res.end();
         return;
@@ -446,6 +459,11 @@ export function createCodeartsPool({
 
   function sendCollect(args) {
     return dispatch({ ...args, collect: true });
+  }
+
+  /** 流式收集：不写 res，增量产出 Anthropic 事件，供 /v1/chat/completions 流式转换。 */
+  function sendStream(args) {
+    return dispatch({ ...args, collect: 'stream' });
   }
 
   /** 签到状态（只读，checkin.go FetchCreditCampaigns）。 */
@@ -486,5 +504,6 @@ export function createCodeartsPool({
     credsOf,
     send,
     sendCollect,
+    sendStream,
   };
 }

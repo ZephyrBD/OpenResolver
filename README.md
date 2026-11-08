@@ -132,7 +132,7 @@ API Key:  zsk_...
 Model:    <pool>/<model>，例如 trae/DeepSeek-V4-Flash
 ```
 
-> `/v1/chat/completions` 目前只支持非流式（`stream:false`）；需要流式请走 Anthropic `/v1/messages`。
+> `/v1/chat/completions` 支持 `stream:true`（SSE chunk 流式）与非流式两种。
 
 ---
 
@@ -144,7 +144,7 @@ Model:    <pool>/<model>，例如 trae/DeepSeek-V4-Flash
 | `GET`  | `/v1/models`                | 模型列表（按密钥的池白名单过滤）                    |
 | `POST` | `/v1/messages`              | Anthropic Messages，支持非流式与 SSE 流式    |
 | `POST` | `/v1/messages/count_tokens` | 本地 token 估算（Claude Code 会调用）        |
-| `POST` | `/v1/chat/completions`      | OpenAI Chat Completions（非流式）        |
+| `POST` | `/v1/chat/completions`      | OpenAI Chat Completions（stream:true 走 SSE chunk 流式）        |
 | `GET`  | `/v1/pool/balance`          | 按池汇总余额接口，输出各池原始额度与账号健康数             |
 | `GET`  | `/`                         | 管理面板（`/panel/*`、`/api/*`、`/auth/*`） |
 
