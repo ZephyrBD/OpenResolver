@@ -1,0 +1,76 @@
+/* 全局基础 · 全宽出血（docs/07 §2：禁止居中定宽容器） */
+@use './tokens.scss';
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 16px/1.6 'Inter', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+}
+
+a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 手写轻表（ElTable 的 CSP 替代，登记 frontend 09） */
+.hand_table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+
+  th,
+  td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 13px;
+    background: transparent;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  tbody tr {
+    transition: background-color 120ms ease;
+  }
+
+  tbody tr:hover {
+    background: var(--accent-10);
+  }
+
+  td.actions {
+    white-space: nowrap;
+  }
+}
+
+/* 组件专有样式不进全局（docs/frontend/02 §7），以下仅为全局结构类 */
+
+/* 通用工具类 */
+.spacer {
+  flex: 1;
+}

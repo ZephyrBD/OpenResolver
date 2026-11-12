@@ -1,0 +1,45 @@
+/* 设计 token · 唯一依据 frontend/Design-md.md（已定稿） */
+
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f7f7fa;
+  --text: #0f0f14;
+  --text-muted: #6e6e78;
+  --border: #e5e5ea;
+
+  --brand-green: #0acf83;
+  --brand-orange: #f24e1e;
+  --brand-purple: #a259ff;
+  --brand-red: #ff7262;
+  --brand-blue: #1abcfe;
+
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 8px 24px rgba(15, 15, 20, 0.08);
+}
+
+/* 语义状态色：品牌色调暗保证可读（不引入新色相） */
+:root {
+  --ok: color-mix(in srgb, var(--brand-green) 72%, #0f0f14);
+  --warn: color-mix(in srgb, var(--brand-orange) 78%, #0f0f14);
+  --err: color-mix(in srgb, var(--brand-red) 72%, #0f0f14);
+}
+
+/* 端级统一强调色（docs/07 §1）：单管理端 → 紫。菜单/路由不配强调色。 */
+[data-accent='admin'] {
+  --accent: var(--brand-purple);
+  --accent-10: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 60%, #0f0f14);
+
+  /* Element Plus 主色跟随端色（docs/frontend/03 §6） */
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--accent) 70%, #ffffff);
+  --el-color-primary-light-5: color-mix(in srgb, var(--accent) 50%, #ffffff);
+  --el-color-primary-light-7: color-mix(in srgb, var(--accent) 30%, #ffffff);
+  --el-color-primary-light-8: color-mix(in srgb, var(--accent) 20%, #ffffff);
+  --el-color-primary-light-9: color-mix(in srgb, var(--accent) 10%, #ffffff);
+  --el-color-primary-dark-2: var(--accent-strong);
+}
