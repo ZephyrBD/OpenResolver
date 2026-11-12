@@ -1,0 +1,49 @@
+name: panel-build
+
+# 面板构建分发：push 到 main 或打 tag 时构建 frontend/，产物进 artifact；tag 同时发 Release。
+on:
+  push:
+    branches: [main]
+    paths: ['frontend/**', 'panel/**', '.github/workflows/panel-build.yml']
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: Install & build panel
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: CSP self-check（构建产物零 <style> 标签、零内联 script）
+        run: |
+          ! grep -qiE '<style' frontend/dist/index.html frontend/dist/*.css
+          ! grep -qE '<script[^>]*>[^<]+</script>' frontend/dist/index.html
+
+      - name: Pack dist
+        run: |
+          cd frontend
+          zip -r ../open-resolver-panel-dist.zip dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panel-dist
+          path: open-resolver-panel-dist.zip
+
+      - name: Upload to Release（仅 tag）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: open-resolver-panel-dist.zip

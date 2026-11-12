@@ -1,5 +1,15 @@
-/* 全局基础 · 全宽出血（docs/07 §2：禁止居中定宽容器） */
 @use './tokens.scss';
+
+/* ---- 资产：Inter 可变字体（OFL，本地打包，CSP 'self' 合规） ---- */
+@font-face {
+  font-family: 'Inter';
+  src: url('../assets/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 全局基础 · 全宽出血（docs/07 §2：禁止居中定宽容器） */
 
 * {
   box-sizing: border-box;

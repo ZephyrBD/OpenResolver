@@ -6,7 +6,7 @@
 [![Dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](package.json)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的订阅额度，包装成标准的 Claude Code / OpenAI 兼容端点。它只依赖 Node.js 内置模块，无 `npm install`、无数据库、无 Docker，账号与密钥全部落在本地。
+OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的订阅额度，包装成标准的 Claude Code / OpenAI 兼容端点。网关本体只依赖 Node.js 内置模块，无 `npm install`、无数据库，账号与密钥全部落在本地；管理面板为独立的 Vue 构建产物（Docker 镜像已内置，裸跑见 `frontend/`）。
 
 > 本项目通过各平台的**非官方接口**工作，仅建议使用你自己的账号，并遵守对应平台的服务条款。
 
@@ -21,7 +21,7 @@ OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的
 | 智能调度   | 加权选号、Top-N 候选、粘性会话、额度比例入权重、失败换号、冷却与熔断                                       |
 | 密钥体系   | `zsk_` 前缀、只存 SHA-256、有效期 / 池白名单 / 模型白名单 / IP 白名单 / token 配额                 |
 | 额度与签到  | 每账号额度明细、自动签到/领取、每日定时补领、ZCode 周末包抢领                                          |
-| 管理面板   | 仪表盘、账号、密钥、设置四页；原生 JS 零构建，支持浏览器内完成账号接入                                       |
+| 管理面板   | 仪表盘、账号、密钥、设置四页；Vue 3 + Element Plus 构建（`frontend/`，产物进 Docker 镜像），支持浏览器内完成账号接入                                       |
 | 安全     | 请求体上限、上游总超时、客户端断开即 abort、忽略伪造 XFF、面板 CSRF + 登录限速                            |
 | 零依赖    | 仅 Node.js ≥ 22 内置模块，无 npm 运行时依赖                                             |
 | 容器化    | 官方 `Dockerfile`（`node:22-alpine`）+ `docker compose up -d` 一键部署，`data/` 独立挂载 |

@@ -205,7 +205,7 @@ export function createPanelGateway({
   now = Date.now,
   fetchImpl = fetch,
   secureCookie = false,
-  publicDir = path.join(import.meta.dirname, 'public'),
+  publicDir = path.join(import.meta.dirname, '..', 'frontend', 'dist'),
   usage = null,
   traeApiHost,
   qoderExchangeUrl,

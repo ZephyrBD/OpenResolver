@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
-# OpenResolver —— 零 npm 依赖，只需 Node >= 22 运行时。
+# OpenResolver —— 网关运行时零 npm 依赖（Node >= 22）；面板为多阶段构建产物。
+# --- 阶段 1：构建面板（pnpm + vite，仅镜像内，不进最终层） ---
+FROM node:22-alpine AS panelbuild
+WORKDIR /fe
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/ ./
+RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
+
+# --- 阶段 2：网关（零依赖，只需 Node 运行时） ---
 FROM node:22-alpine
 
 # su-exec 用于 entrypoint 降权，tzdata 让 usage/YYYY-MM-DD.jsonl 与签到定时器走本地时区
@@ -24,6 +32,9 @@ COPY panel ./panel
 COPY pools ./pools
 COPY profile ./profile
 COPY tools ./tools
+
+# 面板产物：静态服务 publicDir 默认指向 frontend/dist
+COPY --from=panelbuild /fe/dist ./frontend/dist
 
 # 数据目录与挂载点保持一致（tools/trae-login.mjs 硬编码 ../data，靠路径重合避开）
 RUN mkdir -p /app/data && chown -R node:node /app/data

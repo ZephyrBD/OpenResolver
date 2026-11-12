@@ -381,10 +381,13 @@ test('panel.api: trae 回调缺 flowId → 400 明确提示（M6 真机回归：
   assert.match(body.error.message, /flowId/);
 });
 
-test('panel.frontend: trae 回调提交必须携带 flowId（M6 真机回归）', async () => {
-  const publicDir = path.join(import.meta.dirname, '..', 'panel', 'public');
-  const src = fs.readFileSync(path.join(publicDir, 'app.js'), 'utf8');
-  const at = src.indexOf("api('/api/onboard/trae/callback'");
+test('panel.frontend: trae 回调提交必须携带 flowId（M6 真机回归，Vue 版）', async () => {
+  const src = fs.readFileSync(
+    path.join(import.meta.dirname, '..', 'frontend', 'src', 'components', 'accounts', 'OnboardTrae.vue'),
+    'utf8',
+  );
+  const at = src.indexOf("postJson<{ account: OnboardAccount }>('/api/onboard/trae/callback'");
+  assert.ok(at >= 0, 'OnboardTrae 缺 trae 回调调用');
   const handler = src.slice(at, at + 300);
   assert.match(handler, /flowId/, '回调 POST body 里必须带 flowId');
 });

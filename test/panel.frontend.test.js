@@ -5,63 +5,66 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpDataDir, startPanel, makePool, login, panelFetch } from './helpers/panel.mjs';
 
-/** M6b 前端：静态产物可达性 + CSP 自洽 grep + API 形状冒烟（不执行浏览器 JS）。 */
+/**
+ * panel.frontend：Vue 面板源码 CSP 自洽 grep + API 形状冒烟（不执行浏览器 JS）。
+ * 旧面板（panel/public 原生 JS）已随 Batch 5 删除，回滚保险见 tag panel-legacy-backup。
+ */
 
-const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'panel', 'public');
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:";
+const FRONTEND_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend');
+const FONT_FILE = path.join(FRONTEND_DIR, 'src', 'assets', 'fonts', 'InterVariable.woff2');
+const OFL_FILE = path.join(FRONTEND_DIR, 'src', 'assets', 'fonts', 'OFL.txt');
 
-function readPublic(...parts) {
-  return fs.readFileSync(path.join(PUBLIC_DIR, ...parts), 'utf8');
+function listSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.vue$|\.ts$|\.html$/.test(entry.name)) out.push(full);
+    }
+  };
+  walk(path.join(FRONTEND_DIR, 'src'));
+  out.push(path.join(FRONTEND_DIR, 'index.html'));
+  return out;
 }
 
-test('panel.frontend: 源码 grep——无 HTML 字符串注入、无外链资源（CSP 自洽）', () => {
-  const files = ['index.html', 'app.js', 'style.css'];
-  for (const file of files) {
-    const src = readPublic(file);
-    // 注入类 API（app.js 的说明注释已改写，不包含这些词）
-    assert.ok(!/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(src), `${file} 出现 HTML 注入 API`);
-    // 外链资源：script/link src|href 指向协议地址、CSS url() 远程地址
-    assert.ok(!/<script[^>]+src=["']https?:/i.test(src), `${file} 外链脚本`);
-    assert.ok(!/<link[^>]+href=["']https?:/i.test(src), `${file} 外链样式/图标`);
-    assert.ok(!/url\(\s*["']?https?:/i.test(src), `${file} CSS 远程资源`);
-    assert.ok(!/@import/i.test(src), `${file} CSS @import`);
+test('panel.frontend: 源码 grep——无 HTML 注入 API、无外链资源、无内联 script/style（CSP 全维度零内联）', () => {
+  for (const file of listSources()) {
+    const src = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(FRONTEND_DIR, file);
+    // 注入类 API（textContent/createElement 是唯一合法 DOM 写入路径）
+    assert.ok(!/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(src), `${rel} 出现 HTML 注入 API`);
+    // 外链资源：协议地址的 script/link/css url
+    assert.ok(!/<script[^>]+src=["']https?:/i.test(src), `${rel} 外链脚本`);
+    assert.ok(!/<link[^>]+href=["']https?:/i.test(src), `${rel} 外链样式/图标`);
+    assert.ok(!/url\(\s*["']?https?:/i.test(src), `${rel} CSS 远程资源`);
+    // style 属性（含 :style 绑定）一律禁止——CSP style-src-attr 无放行
+    assert.ok(!/\sstyle="/i.test(src), `${rel} 存在 style 属性`);
+    assert.ok(!/:style="/i.test(src), `${rel} 存在 :style 绑定`);
   }
-  // index.html：script 标签必须是外链 module，不许内联
-  const html = readPublic('index.html');
+  // index.html：script 必须是外链 module，无 <style> 标签
+  const html = fs.readFileSync(path.join(FRONTEND_DIR, 'index.html'), 'utf8');
   for (const m of html.matchAll(/<script\b([^>]*)>/g)) {
     assert.match(m[1], /src=/, 'index.html 存在内联 script');
     assert.match(m[1], /type="module"/);
   }
   assert.ok(!/<style\b/i.test(html), 'index.html 存在内联 style 标签');
-  assert.ok(!/\sstyle="/i.test(html), 'index.html 存在 style 属性');
-  // 三个页面路由在 app.js 中注册
-  const app = readPublic('app.js');
-  for (const route of ['/dashboard', '/accounts', '/keys']) {
-    assert.ok(app.includes(`'${route}'`), `app.js 缺路由 ${route}`);
+});
+
+test('panel.frontend: 菜单唯一数据源注册四个管理端路由', () => {
+  const menu = fs.readFileSync(path.join(FRONTEND_DIR, 'src', 'api', 'menu.ts'), 'utf8');
+  for (const p of ['/admin/dashboard', '/admin/accounts', '/admin/keys', '/admin/settings']) {
+    assert.ok(menu.includes(`'${p}'`), `menu.ts 缺路由 ${p}`);
   }
 });
 
-test('panel.frontend: / 200 + CSP；app.js / style.css 可达且 Content-Type 正确', async (t) => {
-  const dataDir = tmpDataDir(t);
-  const { base } = await startPanel(t, { dataDir }); // publicDir 缺省 → panel/public
-
-  const home = await fetch(`${base}/`);
-  assert.equal(home.status, 200);
-  assert.equal(home.headers.get('content-type'), 'text/html; charset=utf-8');
-  assert.equal(home.headers.get('content-security-policy'), CSP);
-  const html = await home.text();
-  assert.match(html, /\/panel\/app\.js/);
-  assert.match(html, /\/panel\/style\.css/);
-
-  const js = await fetch(`${base}/panel/app.js`);
-  assert.equal(js.status, 200);
-  assert.equal(js.headers.get('content-type'), 'text/javascript; charset=utf-8');
-  const css = await fetch(`${base}/panel/style.css`);
-  assert.equal(css.status, 200);
-  assert.equal(css.headers.get('content-type'), 'text/css; charset=utf-8');
+test('panel.frontend: Inter 可变字体 + OFL 许可随源码分发（合规必修）', () => {
+  assert.ok(fs.existsSync(FONT_FILE), 'frontend/src/assets/fonts/InterVariable.woff2 不存在');
+  const lic = fs.readFileSync(OFL_FILE, 'utf8');
+  assert.match(lic, /OPEN FONT LICENSE/, 'OFL.txt 内容异常');
 });
 
-test('panel.frontend: 冒烟——三个页面用到的 API 全部存在且 200（防拼写漂移）', async (t) => {
+test('panel.frontend: 冒烟——面板页面用到的 API 全部存在且 200（防拼写漂移）', async (t) => {
   const dataDir = tmpDataDir(t);
   const { base } = await startPanel(t, { dataDir, withKey: false, pools: [makePool('zcode', { dataDir })] });
   const { cookies } = await login(base);
@@ -117,19 +120,15 @@ test('panel.frontend: 冒烟——三个页面用到的 API 全部存在且 200�
 
   assert.equal((await panelFetch(base, `/api/keys/${key.id}`, { method: 'DELETE', cookies })).status, 200);
 
+  // 设置页：读 + 写（写后恢复默认组）
+  const settings = await panelFetch(base, '/api/settings', { cookies });
+  assert.equal(settings.status, 200);
+  assert.ok('maxInFlight' in (await settings.json()).settings);
+
   // 登录视图用到：/auth/me、/auth/logout
   const me = await panelFetch(base, '/auth/me', { cookies });
   assert.equal(me.status, 200);
   assert.equal((await me.json()).authenticated, true);
   const out = await panelFetch(base, '/auth/logout', { method: 'POST', cookies });
   assert.equal(out.status, 200);
-});
-
-test('panel.frontend: currentRoute 必须剥掉 hash 的 # 前缀再查 routes（M6 真机回归：否则所有路由回退仪表盘）', async () => {
-  const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'panel', 'public');
-  const src = fs.readFileSync(path.join(publicDir, 'app.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function currentRoute'), src.indexOf('function setActiveNav'));
-  assert.match(fn, /slice\(1\)/, 'currentRoute 里必须对 location.hash 做 slice(1) 归一化');
-  const routesSrc = src.slice(src.indexOf('const routes'), src.indexOf('function currentRoute'));
-  assert.ok(routesSrc.includes("'\/accounts'"), 'routes 键是不带 # 的路径');
 });

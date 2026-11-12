@@ -303,14 +303,14 @@ test('zcode quota：失败退避期内 invalidate 后立刻回源', async (t) =>
   assert.equal(quota.peek(acc), null);
 });
 
-// 前端源码断言（与 panel.frontend.test.js 同风格）：账号页挂载即查 + 领取联动
-test('panel 前端：账号页挂载即触发 quota 查询、claimBox 领取后联动刷新', () => {
-  const app = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'panel', 'public', 'app.js'), 'utf8');
-  const quotaFn = app.slice(app.indexOf('function quotaDetailsBox'), app.indexOf('function claimBox'));
-  assert.match(quotaFn, /if \(autoRefresh\) refresh\(\)/, 'quotaDetailsBox 挂载即自动查询');
-  assert.match(quotaFn, /box\.refreshQuota = refresh/, '查询封装成 refresh 供外部联动');
+// 前端源码断言（Vue 版）：账号页挂载即查 + 领取联动
+test('panel 前端：账号页挂载即触发 quota 查询、claim 领取后联动刷新', () => {
+  const frontend = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'src');
+  const quotaSrc = fs.readFileSync(path.join(frontend, 'components', 'accounts', 'QuotaDetails.vue'), 'utf8');
+  assert.match(quotaSrc, /autoRefresh/, 'QuotaDetails 支持挂载即自动查询');
+  assert.match(quotaSrc, /defineExpose\(\{ refresh \}\)/, '查询封装成 refresh 供外部联动');
 
-  const claimFn = app.slice(app.indexOf('function claimBox'), app.indexOf('function qoderOnboardBox'));
-  assert.match(claimFn, /refreshQuota/, 'claimBox 领取动作后联动刷新额度明细');
-  assert.match(claimFn, /detail\?\.tried/, '领取结果展示候选摘要（tried）');
+  const claimSrc = fs.readFileSync(path.join(frontend, 'components', 'accounts', 'ClaimPanel.vue'), 'utf8');
+  assert.match(claimSrc, /onSuccess/, 'claim 领取动作后联动刷新额度明细');
+  assert.match(claimSrc, /tried/, '领取结果展示候选摘要（tried）');
 });

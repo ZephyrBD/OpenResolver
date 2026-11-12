@@ -3,7 +3,7 @@ import path from 'node:path';
 import { sendJson } from '../http/respond.mjs';
 
 /**
- * 面板静态服务挂载点（M6b 前端用）：`/` 与 `/panel/*` 服务 `panel/public/` 下的文件。
+ * 面板静态服务挂载点：`/` 与 `/panel/*` 服务 `frontend/dist/` 下的构建产物。
  * 路径归一化后校验前缀防穿越；index.html 不存在时 503 提示未部署。
  */
 
@@ -44,7 +44,7 @@ export function createStaticHandler({ publicDir, maxFileBytes = 4 * 1024 * 1024 
     if (url.pathname === '/' || url.pathname === '/panel') {
       if (!fs.existsSync(indexFile)) {
         return sendJson(res, 503, {
-          error: { type: 'api_error', message: '面板文件未部署，请把前端产物放到 panel/public/' },
+          error: { type: 'api_error', message: '面板文件未部署：在 frontend/ 下 pnpm install && pnpm build，产物输出到 frontend/dist/' },
         });
       }
       return serve(res, indexFile);
