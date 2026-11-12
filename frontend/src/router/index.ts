@@ -10,7 +10,9 @@ const menuRoutes: RouteRecordRaw[] = MENUS.map((m) => ({
   name: m.name,
   component: m.name === 'adminDashboard'
     ? () => import('@/view/admin/dashboard/index.vue')
-    : ModulePlaceholder,
+    : m.name === 'adminAccounts'
+      ? () => import('@/view/admin/accounts/index.vue')
+      : ModulePlaceholder,
   meta: { title: m.title, role: m.role },
 }))
 

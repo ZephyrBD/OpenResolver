@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { session } from '@/store/session'
+import { registerConfirm } from '@/composables/useConfirm'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
+import ConfirmHost from '@/components/common/ConfirmHost.vue'
 
 const route = useRoute()
+const confirmHost = ref<InstanceType<typeof ConfirmHost> | null>(null)
 
 onMounted(() => {
   // 端级统一强调色（Design-md §1.3）：单管理端，固定 admin
   document.documentElement.dataset.accent = 'admin'
+  if (confirmHost.value) registerConfirm((m, o) => confirmHost.value!.confirm(m, o))
 })
 
 watch(
@@ -25,6 +29,7 @@ watch(
   <main class="app_main">
     <router-view />
   </main>
+  <ConfirmHost ref="confirmHost" />
 </template>
 
 <style scoped lang="scss">
