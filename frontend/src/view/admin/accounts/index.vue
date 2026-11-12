@@ -13,6 +13,7 @@ import {
 import { accountName, displayWithId } from '@/utils/fmt'
 import { confirm } from '@/composables/useConfirm'
 import AppDialog from '@/components/common/AppDialog.vue'
+import AppSelect from '@/components/common/AppSelect.vue'
 import QuotaDetails from '@/components/accounts/QuotaDetails.vue'
 import ClaimPanel from '@/components/accounts/ClaimPanel.vue'
 import ManualImportPanel from '@/components/accounts/ManualImportPanel.vue'
@@ -137,10 +138,11 @@ const showManualImport = computed(() => pool.value === 'zcode')
   <div>
     <div class="page_head">
       <h2>账号</h2>
-      <el-select v-model="pool" class="pool_select">
-        <el-option v-for="name in POOL_NAMES" :key="name" :label="name" :value="name" />
-      </el-select>
-    </div>
+      <AppSelect
+        v-model="pool"
+        :options="POOL_NAMES.map((name) => ({ label: name, value: name }))"
+        class="pool_select"
+      />    </div>
 
     <div class="action_row">
       <el-button v-if="showOnboard" type="primary" @click="onboardDlg?.open()">登录接入</el-button>
@@ -156,9 +158,9 @@ const showManualImport = computed(() => pool.value === 'zcode')
         <tr>
           <th>名称 / ID</th>
           <th>状态</th>
-          <th style="width: 72px">启用</th>
-          <th style="width: 96px">权重</th>
-          <th style="width: 120px">冷却</th>
+          <th width="72">启用</th>
+          <th width="96">权重</th>
+          <th width="120">冷却</th>
           <th class="actions_col">操作</th>
         </tr>
       </thead>

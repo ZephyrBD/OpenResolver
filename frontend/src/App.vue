@@ -5,6 +5,7 @@ import { session } from '@/store/session'
 import { registerConfirm } from '@/composables/useConfirm'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
+import AppToast from '@/components/common/AppToast.vue'
 
 const route = useRoute()
 const confirmHost = ref<InstanceType<typeof ConfirmHost> | null>(null)
@@ -30,6 +31,7 @@ watch(
     <router-view />
   </main>
   <ConfirmHost ref="confirmHost" />
+  <AppToast />
 </template>
 
 <style scoped lang="scss">

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { EChartsCoreOption } from 'echarts/core'
 import { fetchModels, fetchOverview, fetchPools, fetchStats } from '@/api/dashboard'
 import type { GatewayModel } from '@/types/models'
-import EChart from '@/components/common/EChart.vue'
+import AppSelect from '@/components/common/AppSelect.vue'
+import TrendChart from '@/components/common/TrendChart.vue'
+import HandProgress from '@/components/data/HandProgress.vue'
 import MetricRow from '@/components/data/MetricRow.vue'
 import type { MetricItem } from '@/components/data/MetricRow.vue'
 import HandTable from '@/components/data/HandTable.vue'
@@ -106,42 +107,8 @@ const poolColumns: HandColumn[] = [
   { key: 'ratio', label: '平均额度' },
 ]
 
-const trendOption = computed<EChartsCoreOption>(() => ({
-  grid: { left: 56, right: 44, top: 32, bottom: 34 },
-  legend: { top: 0, left: 0, itemWidth: 10, itemHeight: 10, textStyle: { color: '#6e6e78', fontSize: 11 } },
-  tooltip: { trigger: 'axis' },
-  xAxis: {
-    type: 'category',
-    data: stats.value.map((s) => s.date.slice(5)),
-    axisLabel: { color: '#6e6e78', fontSize: 11 },
-    axisLine: { lineStyle: { color: '#e5e5ea' } },
-  },
-  yAxis: [
-    {
-      type: 'value',
-      axisLabel: { color: '#6e6e78', fontSize: 11, formatter: (v: number) => v.toLocaleString('zh-CN') },
-      splitLine: { lineStyle: { color: '#e5e5ea' } },
-    },
-    {
-      type: 'value',
-      max: 100,
-      axisLabel: { color: '#6e6e78', fontSize: 11, formatter: '{value}%' },
-      splitLine: { show: false },
-    },
-  ],
-  series: [
-    { name: '请求量', type: 'bar', data: stats.value.map((s) => s.requests), itemStyle: { color: '#1abcfe', opacity: 0.9 } },
-    {
-      name: '错误率',
-      type: 'line',
-      yAxisIndex: 1,
-      data: stats.value.map((s) => (s.requests ? Number(((s.errors / s.requests) * 100).toFixed(2)) : 0)),
-      itemStyle: { color: '#ff7262' },
-      lineStyle: { color: '#ff7262', width: 2 },
-      showSymbol: false,
-    },
-  ],
-}))
+const trendChartReady = computed(() => stats.value.length > 0)
+
 </script>
 
 <template>
@@ -169,7 +136,7 @@ const trendOption = computed<EChartsCoreOption>(() => ({
 
       <section>
         <h3>14 天趋势</h3>
-        <EChart v-if="stats.length" :option="trendOption" :height="300" />
+        <TrendChart v-if="trendChartReady" :stats="stats" />
         <el-empty v-else description="暂无数据" :image-size="72" />
       </section>
 
@@ -177,12 +144,11 @@ const trendOption = computed<EChartsCoreOption>(() => ({
         <h3>各池额度</h3>
         <HandTable :columns="poolColumns" :rows="poolRows" empty-text="无池数据">
           <template #cell_ratio="{ row }">
-            <el-progress
+            <HandProgress
               v-if="row.ratio != null"
               :percentage="Math.round(row.ratio * 100)"
               :color="row.ratio <= 0.2 ? 'var(--brand-red)' : row.ratio <= 0.5 ? 'var(--brand-orange)' : 'var(--brand-blue)'"
-              :stroke-width="8"
-              class="quota_bar"
+              :width="110"
             />
             <span v-else class="muted">无数据</span>
           </template>
@@ -192,9 +158,7 @@ const trendOption = computed<EChartsCoreOption>(() => ({
       <section>
         <div class="models_head">
           <h3>模型列表</h3>
-          <el-select v-model="poolFilter" placeholder="全部池" clearable class="pool_select">
-            <el-option v-for="p in poolOptions" :key="p" :label="p" :value="p" />
-          </el-select>
+          <AppSelect v-model="poolFilter" :options="poolOptions.map((p) => ({ label: p, value: p }))" clearable class="pool_select" />
         </div>
         <p class="muted models_hint">调用时 model 填完整调用名（<code>池名/模型ID</code>），网关自动映射到上游模型。</p>
         <HandTable :columns="modelColumns" :rows="modelRows" empty-text="该池暂无模型">

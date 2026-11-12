@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { fetchQuota, type PoolName, type QuotaEntry } from '@/api/accounts'
 import { fmtTime, fmtTokens } from '@/utils/fmt'
+import HandProgress from '@/components/data/HandProgress.vue'
 
 /** 额度明细（现场回源，挂载即查一次；claim 成功后父组件可调 refresh()）。 */
 const props = defineProps<{ pool: PoolName | string; autoRefresh?: boolean }>()
@@ -69,7 +70,7 @@ defineOptions({ name: 'QuotaDetails' })
       <thead>
         <tr>
           <th>账号</th>
-          <th style="width: 130px">额度</th>
+          <th width="130">额度</th>
           <th>明细</th>
           <th>周期/套餐</th>
           <th>签到</th>
@@ -82,11 +83,11 @@ defineOptions({ name: 'QuotaDetails' })
             <div v-if="row.name !== row.q.account" class="muted mono">{{ row.q.account }}</div>
           </td>
           <td>
-            <el-progress
+            <HandProgress
               v-if="row.q.ratio != null"
               :percentage="Math.round(row.q.ratio * 100)"
               :color="row.q.ratio <= 0.2 ? 'var(--brand-red)' : row.q.ratio <= 0.5 ? 'var(--brand-orange)' : 'var(--brand-blue)'"
-              :stroke-width="8"
+              :width="110"
             />
             <span v-else class="muted">无数据</span>
           </td>

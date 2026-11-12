@@ -1,4 +1,4 @@
-import { ElMessage } from 'element-plus'
+import { toast } from '@/composables/useToast'
 
 export function fmtTokens(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
@@ -27,8 +27,8 @@ export function displayWithId(name?: string, id?: string): string {
 export async function copyText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
+    toast('已复制', 'success')
   } catch {
-    ElMessage.error('复制失败')
+    toast('复制失败', 'error')
   }
 }

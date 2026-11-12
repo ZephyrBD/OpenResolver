@@ -92,9 +92,9 @@ defineOptions({ name: 'KeysView' })
         <tr>
           <th>名称 / ID</th>
           <th>启用池</th>
-          <th style="width: 140px">过期时间</th>
-          <th style="width: 150px">创建时间</th>
-          <th style="width: 110px; text-align: right">已用 tokens</th>
+          <th width="140">过期时间</th>
+          <th width="150">创建时间</th>
+          <th width="110" class="right">已用 tokens</th>
           <th class="actions_col">操作</th>
         </tr>
       </thead>
@@ -107,7 +107,7 @@ defineOptions({ name: 'KeysView' })
           <td class="muted">{{ poolsOf(key) }}</td>
           <td class="mono">{{ key.expiresAt ? fmtTime(key.expiresAt) : '永不过期' }}</td>
           <td class="mono">{{ fmtTime(key.createdAt) }}</td>
-          <td class="mono" style="text-align: right">{{ fmtTokens(key.usedTokens || 0) }}</td>
+          <td class="mono right">{{ fmtTokens(key.usedTokens || 0) }}</td>
           <td class="actions_col">
             <el-button size="small" @click="rotate(key)">轮换</el-button>
             <el-button size="small" type="danger" plain @click="remove(key)">删除</el-button>
@@ -162,6 +162,10 @@ defineOptions({ name: 'KeysView' })
 
 .actions_col {
   white-space: nowrap;
+}
+
+.right {
+  text-align: right;
 }
 
 .secret_box {

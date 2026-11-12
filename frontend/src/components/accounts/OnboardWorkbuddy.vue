@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { postJson } from '@/api/request'
+import AppSelect from '@/components/common/AppSelect.vue'
 import { accountName, copyText, displayWithId } from '@/utils/fmt'
 import type { OnboardAccount } from '@/api/accounts'
 
@@ -66,10 +67,7 @@ defineOptions({ name: 'OnboardWorkbuddy' })
   <div>
     <div class="form_row">
       <span class="muted">Region</span>
-      <el-select v-model="region" class="region_select">
-        <el-option label="cn" value="cn" />
-        <el-option label="global" value="global" />
-      </el-select>
+      <AppSelect v-model="region" :options="[{ label: 'cn', value: 'cn' }, { label: 'global', value: 'global' }]" class="region_select" />
       <el-button :loading="busy" @click="genLink">生成登录链接</el-button>
     </div>
     <div v-if="link" class="form_row">

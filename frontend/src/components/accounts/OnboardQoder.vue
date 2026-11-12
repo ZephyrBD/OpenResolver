@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { postJson } from '@/api/request'
+import AppSelect from '@/components/common/AppSelect.vue'
 import { accountName, displayWithId } from '@/utils/fmt'
 import type { OnboardAccount } from '@/api/accounts'
 
@@ -52,10 +53,7 @@ defineOptions({ name: 'OnboardQoder' })
       <span class="muted">PAT</span>
       <el-input v-model="pat" type="password" placeholder="粘贴 PAT" show-password class="pat_input" />
       <span class="muted">Region</span>
-      <el-select v-model="region" class="region_select">
-        <el-option label="global" value="global" />
-        <el-option label="cn" value="cn" />
-      </el-select>
+      <AppSelect v-model="region" :options="[{ label: 'global', value: 'global' }, { label: 'cn', value: 'cn' }]" class="region_select" />
       <el-button type="primary" :loading="busy" @click="submit">导入</el-button>
     </div>
     <p class="muted hint">PAT 以 pt- 开头；Region 必须与 PAT 所属站点一致。</p>

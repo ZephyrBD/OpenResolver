@@ -9,21 +9,23 @@ import { session } from '@/store/session'
 const route = useRoute()
 const router = useRouter()
 
-// docs/frontend/06 §2：el-menu-item 的 index 必须是真实路由名；
-// 但 el-menu 的 router 模式把 index 当路径，这里手动按路由名跳转
-function onSelect(name: string): void {
-  void router.push({ name })
-}
-
 const ICONS: Record<string, Component> = { Odometer, User, Key, Setting }
 
 const items = computed(() =>
-  [...MENUS].sort((a, b) => a.order - b.order).map((m) => ({
-    name: m.name,
-    title: m.title,
-    icon: ICONS[m.icon],
-  })),
+  [...MENUS]
+    .sort((a, b) => a.order - b.order)
+    .map((m) => ({
+      name: m.name,
+      path: m.path,
+      title: m.title,
+      icon: ICONS[m.icon],
+    })),
 )
+
+// docs/frontend/06 §2 行式同构；el-menu 的行内缩进/激活实现触 CSP 裁定，改手写导航（登记组件清单）
+function onSelect(name: string): void {
+  void router.push({ name })
+}
 
 async function onLogout(): Promise<void> {
   await session.logout()
@@ -40,12 +42,20 @@ async function onLogout(): Promise<void> {
       </svg>
       Open-Resolver
     </span>
-    <el-menu :default-active="route.name as string" class="sidebar_menu" @select="onSelect">
-      <el-menu-item v-for="item in items" :key="item.name" :index="item.name">
+    <nav class="sidebar_nav" aria-label="主导航">
+      <a
+        v-for="item in items"
+        :key="item.name"
+        class="nav_item"
+        :class="{ active: route.name === item.name }"
+        :href="`#${item.path}`"
+        :aria-current="route.name === item.name ? 'page' : undefined"
+        @click.prevent="onSelect(item.name)"
+      >
         <el-icon><component :is="item.icon" /></el-icon>
         <span>{{ item.title }}</span>
-      </el-menu-item>
-    </el-menu>
+      </a>
+    </nav>
     <div class="sidebar_foot">
       <el-button text class="logout_btn" @click="onLogout">登出</el-button>
     </div>
@@ -76,20 +86,32 @@ async function onLogout(): Promise<void> {
   padding: 0 8px;
 }
 
-.sidebar_menu {
-  border-right: none;
+.sidebar_nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1;
+}
 
-  :deep(.el-menu-item) {
-    height: 42px;
-    line-height: 42px;
-    border-radius: var(--radius-pill);
-    margin: 2px 0;
+.nav_item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-weight: 500;
+  transition: background-color 120ms ease, color 120ms ease;
+
+  &:hover {
+    color: var(--text);
+    background: var(--bg-alt);
   }
 
-  :deep(.el-menu-item.is-active) {
-    background: var(--accent-10);
+  &.active {
     color: var(--accent-strong);
+    background: var(--accent-10);
   }
 }
 
@@ -119,15 +141,10 @@ async function onLogout(): Promise<void> {
     border-bottom: 1px solid var(--border);
   }
 
-  .sidebar_menu {
+  .sidebar_nav {
     flex-direction: row;
-    display: flex;
+    flex-wrap: wrap;
     flex: 0 0 auto;
-
-    :deep(.el-menu-item) {
-      margin: 0 2px;
-      padding: 0 12px;
-    }
   }
 
   .sidebar_foot {

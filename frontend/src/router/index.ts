@@ -14,7 +14,9 @@ const menuRoutes: RouteRecordRaw[] = MENUS.map((m) => ({
       ? () => import('@/view/admin/accounts/index.vue')
       : m.name === 'adminKeys'
         ? () => import('@/view/admin/keys/index.vue')
-        : ModulePlaceholder,
+        : m.name === 'adminSettings'
+          ? () => import('@/view/admin/settings/index.vue')
+          : ModulePlaceholder,
   meta: { title: m.title, role: m.role },
 }))
 
