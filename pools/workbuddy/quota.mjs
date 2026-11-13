@@ -1,4 +1,4 @@
-// 积分包余额 + 签到状态（只读）+ 退避缓存。结构照抄 pools/trae/quota.mjs（不 import）。
+// 积分包余额 + 签到状态（只读）。缓存骨架共用 pools/quota-cache.mjs，本文件只保留上游事实。
 //
 // 双 region 都查余额：POST {billingEndpoint}/v2/billing/meter/get-user-resource
 // （分页 + ProductCode=p_tcaca + Status 0/3 + 有效期窗口），cn 额外查签到状态
@@ -15,6 +15,8 @@ import {
 } from './constants.mjs';
 import { authHeaders } from './headers.mjs';
 import { unwrap } from './auth.mjs';
+
+import { createQuotaCacheSkeleton } from '../quota-cache.mjs';
 
 const DEFAULT_TTL_MS = 5 * 60_000;
 const DEFAULT_BACKOFF_MS = 60_000;
@@ -156,8 +158,6 @@ export function createWorkbuddyQuotaCache({
   backoffMaxMs = DEFAULT_BACKOFF_MAX_MS,
   timeoutMs = 10_000,
 } = {}) {
-  const cache = new Map();
-  const inflight = new Map();
 
   async function fetchResource(acc) {
     const res = await fetchImpl(`${billingEndpoint}${EP_USER_RESOURCE}`, {
@@ -188,68 +188,17 @@ export function createWorkbuddyQuotaCache({
     return checkinFrom(unwrap(await res.json()));
   }
 
-  async function attempt(acc, key) {
-    try {
-      const parsed = await fetchResource(acc);
-      const next = {
-        ...parsed,
-        checkin: null,
-        fetchedAt: now(),
-        error: null,
-        failures: 0,
-        nextAttemptAt: 0,
-      };
-      cache.set(key, next);
-      // 签到状态是展示项（仅 cn）：慢/失败不拖余额主链路，成功后回填同一条目
-      if (region === 'cn') {
-        try {
-          next.checkin = await fetchCheckin(acc);
-        } catch {
-          // 保留 null，下次刷新再试
-        }
-      }
-      return resultOf(next, 'live');
-    } catch (err) {
-      const previous = cache.get(key) ?? { ratio: null, details: [], periodEnd: null, checkin: null, fetchedAt: 0, failures: 0 };
-      const failures = (previous.failures ?? 0) + 1;
-      const backoff = Math.min(backoffBaseMs * 2 ** (failures - 1), backoffMaxMs);
-      const next = { ...previous, error: err?.message || '积分包查询失败', failures, nextAttemptAt: now() + backoff };
-      cache.set(key, next);
-      return resultOf(next, previous.ratio === null && !previous.fetchedAt ? 'unknown' : 'stale', next.error);
-    }
-  }
-
-  async function get(acc) {
-    const key = entryKey(acc);
-    const t = now();
-    const entry = cache.get(key);
-    if (entry && !entry.error && t - entry.fetchedAt < ttlMs) {
-      return resultOf(entry, 'live');
-    }
-    if (entry && entry.nextAttemptAt > t) {
-      return resultOf(entry, entry.ratio === null && !entry.details?.length ? 'unknown' : 'stale', entry.error);
-    }
-    const pending = inflight.get(key);
-    if (pending) return pending;
-    const promise = attempt(acc, key).finally(() => inflight.delete(key));
-    inflight.set(key, promise);
-    return promise;
-  }
-
-  /** 调度器 quotaRatio 挂点：最近一次成功聚合值；无包/无数据返回 null（不惩罚）。 */
-  function peek(acc) {
-    const entry = cache.get(entryKey(acc));
-    return typeof entry?.ratio === 'number' ? entry.ratio : null;
-  }
-
-  /** 领取成功后清缓存：按账号删 entry（连同退避计数），下个 get 即回源；无参全清。 */
-  function invalidate(acc) {
-    if (acc == null) {
-      cache.clear();
-      return;
-    }
-    cache.delete(entryKey(acc));
-  }
-
-  return { get, peek, invalidate };
+  return createQuotaCacheSkeleton({
+    now,
+    ttlMs,
+    backoffBaseMs,
+    backoffMaxMs,
+    fetchOne: (acc) => fetchResource(acc),
+    // 签到状态是展示项（仅 cn）：慢/失败不拖余额主链路，成功后回填同一条目
+    afterFetch: async (entry, acc) => (region === 'cn' ? { checkin: await fetchCheckin(acc) } : {}),
+    toResult: resultOf,
+    errorOf: (err) => err?.message || '积分包查询失败',
+    staleSource: (entry) => (entry.ratio === null && !entry.fetchedAt ? 'unknown' : 'stale'),
+  });
 }
+

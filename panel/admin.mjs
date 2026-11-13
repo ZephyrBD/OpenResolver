@@ -210,10 +210,10 @@ export function clearSessionCookie({ secure = false } = {}) {
 }
 
 /** CSRF cookie 是双提交的前端可读一半：不能加 HttpOnly。 */
-export function csrfCookie(token) {
-  return `${CSRF_COOKIE}=${token}; Path=/; SameSite=Lax`;
+export function csrfCookie(token, { secure = false } = {}) {
+  return `${CSRF_COOKIE}=${token}; Path=/; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
-export function clearCsrfCookie() {
-  return `${CSRF_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`;
+export function clearCsrfCookie({ secure = false } = {}) {
+  return `${CSRF_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`;
 }

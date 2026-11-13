@@ -7,6 +7,16 @@ import { createTraePool, classifyUpstreamError, anthropicMessageFromEvents } fro
 const CHAT_PATH = '/api/agent/v3/llm_utils_chat';
 const ENT_PATH = '/trae/api/v2/pay/ide_user_ent_usage';
 
+/** 轮询直到谓词为真（fire-and-forget 场景等待，参照 zcode.abort.test.js）。 */
+async function waitFor(fn, timeoutMs = 3000) {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) return false;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return true;
+}
+
 function soloSse(parts) {
   return parts.map((p) => `event: ${p.event}\ndata: ${JSON.stringify(p.data)}\n\n`).join('');
 }
@@ -243,8 +253,8 @@ test('quota：dispatch 后 fire-and-forget 拉取，peek 非 null，checkin 进�
   });
   assert.equal(res.status, 200);
 
-  // fire-and-forget：等微任务 + 桩响应落定
-  await new Promise((r) => setTimeout(r, 100));
+  // fire-and-forget：轮询等额度回源落定（不真等固定时长）
+  assert.equal(await waitFor(() => pool.quota.peek(pool.scheduler.accounts[0]) !== null), true, '额度应回源落定');
   const acc = pool.scheduler.accounts[0];
   assert.equal(pool.quota.peek(acc), 0.7, 'credits_limit 30+20、已用 10+5 → 剩余 35/50');
   assert.deepEqual(acc.checkin, { checked_in: false, credits: 50, enable: true });

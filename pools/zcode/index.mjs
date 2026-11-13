@@ -7,16 +7,8 @@ import { DEFAULT_SETTINGS } from '../settings.mjs';
 import { sseBodyChannel } from '../event-channel.mjs';
 import { buildUpstreamBody } from './upstream.mjs';
 import { createQuotaCache } from './quota.mjs';
-
-/**
- * 冷却时长仍从这里导出（老调用方兼容）；真实值来自 pools/settings.mjs，避免两处漂移。
- */
-export const COOLDOWN = Object.freeze({
-  blocked: DEFAULT_SETTINGS.blockedCooldownMs, // 3012 指纹/风控
-  busy: DEFAULT_SETTINGS.busyCooldownMs, // 限流首犯
-  quota: DEFAULT_SETTINGS.quotaCooldownMs, // 限流连犯
-  server: DEFAULT_SETTINGS.serverCooldownMs, // 5xx / 网络错误
-});
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
+import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
 
 function safeParse(text) {
   try {
@@ -114,8 +106,8 @@ export function createZcodePool({
   rng = Math.random,
   now = Date.now,
 } = {}) {
-  const origin = config.origin || 'https://zcode.z.ai';
-  const appVersion = config.appVersion || '3.16.3';
+  const origin = config.origin || ZCODE_ORIGIN;
+  const appVersion = config.appVersion || ZCODE_APP_VERSION;
   const upstreamTimeoutMs = config.upstreamTimeoutMs ?? 600_000;
   const upstreamUrl = `${origin}/api/v1/zcode-plan/anthropic/v1/messages`;
   const quota = config.quota || createQuotaCache({ origin, appVersion, fetchImpl, now });
@@ -141,22 +133,7 @@ export function createZcodePool({
   const state = scheduler.accounts;
   const maxAttempts = Math.max(1, config.maxAttempts ?? scheduler.settings.maxAttempts);
 
-  function unavailable(cause) {
-    const info = scheduler.unavailableInfo();
-    if (!info.pool) {
-      return new HttpError(429, '没有可用账号，请检查账号状态', { type: 'rate_limit_error' });
-    }
-    if (!info.cooling && info.saturated) {
-      return new HttpError(429, '当前并发已满，请稍后重试', { type: 'rate_limit_error' });
-    }
-    const waitMs = Math.max(0, (info.soonestRecovery || scheduler.soonestRecovery()) - scheduler.now());
-    const suffix = cause ? `（最后错误：${cause}）` : '';
-    return new HttpError(
-      429,
-      `所有 ZCode 账号暂不可用，约 ${Math.max(1, Math.ceil(waitMs / 60_000))} 分钟后恢复${suffix}`,
-      { type: 'rate_limit_error' },
-    );
-  }
+  const unavailable = (cause) => unavailableError(scheduler, 'ZCode', cause);
 
   function relay(upstream, res, text) {
     const type = upstream.headers.get('content-type') || 'application/json';
@@ -180,19 +157,9 @@ export function createZcodePool({
     const stickyKey = sessionKeyOf({ req, body, keyId: key?.id });
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let acc = null;
-      if (stickyKey) {
-        if (attempt === 0) {
-          const bound = scheduler.stickyGet(stickyKey, { readyOnly: true });
-          if (bound && !tried.has(bound.id)) acc = bound;
-          else scheduler.stickyClear(stickyKey);
-        } else {
-          scheduler.stickyClear(stickyKey); // 重试一律解绑，避免失败会话钉在同一账号
-        }
-      }
-      if (!acc) acc = scheduler.pick({ exclude: tried, allowFallback: attempt > 0 });
+      // 选号：首试走粘性、重试解绑（公共件 pickAttemptAccount）
+      const acc = pickAttemptAccount(scheduler, stickyKey, attempt, tried);
       if (!acc) throw unavailable(lastError?.message);
-      tried.add(acc.id);
 
       const payload = buildUpstreamBody(body, profile, acc);
       const timeout = AbortSignal.timeout(upstreamTimeoutMs);

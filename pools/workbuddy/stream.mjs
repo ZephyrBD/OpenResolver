@@ -3,7 +3,7 @@
 // HTTP 200 信封里的业务错误（AGENTS.md 已知坑——不能只看状态码）与流中断出口。
 
 import { Readable } from 'node:stream';
-import { createSseParser } from '../../adapters/sse-reader.mjs';
+import { createSseParser, utf8TextChunks } from '../../adapters/sse-reader.mjs';
 import { openaiSseToAnthropicEvents } from '../../adapters/anthropic-to-openai.mjs';
 
 /** {"code":6004,"msg":"..."} / {"error":{...}} 形状且没有 choices → 业务错误。 */
@@ -35,8 +35,7 @@ export async function consumeWbSse(upstream, { model, signal, onEvents }) {
   const parser = createSseParser();
   async function* eventStream() {
     if (!upstream.body) return;
-    for await (const chunk of Readable.fromWeb(upstream.body, { signal })) {
-      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    for await (const text of utf8TextChunks(Readable.fromWeb(upstream.body, { signal }))) {
       for (const { event, data } of parser.push(text)) {
         const biz = businessErrorOf(safeJson(data));
         if (biz) throw new WbStreamError(biz);

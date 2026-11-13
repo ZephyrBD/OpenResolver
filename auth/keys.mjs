@@ -40,7 +40,10 @@ export function createKey(db, { name, pools = [], expiresAt = 0, tokenQuota = 0,
 export function findKeyBySecret(db, secret) {
   if (typeof secret !== 'string' || !secret.startsWith(KEY_PREFIX)) return null;
   const hash = hashSecret(secret);
-  const key = db.keys.find((k) => k.keyHash === hash);
+  // 摘要比较也走 timingSafeEqual（07 §7 BX1：秘密相关相等比较不用 ===）
+  const key = db.keys.find(
+    (k) => k.keyHash.length === hash.length && crypto.timingSafeEqual(Buffer.from(k.keyHash), Buffer.from(hash)),
+  );
   if (!key || key.enabled === false) return null;
   if (key.expiresAt && key.expiresAt <= Date.now()) return null;
   return key;

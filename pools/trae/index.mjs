@@ -3,16 +3,13 @@
 //（base 标 needs_login），流内 1005/4008 → quota_exhausted（base 内建 12h 冷却），
 // 4001 / "prompt is too long" → 请求级 400：不冷却账号、不换号重试（换任何账号
 // 结果相同，vendor/cpa-trae issue #9 的处理）。
-//
-// Anthropic 事件 → message JSON 的聚合抄自 pools/qoder/index.mjs
-// anthropicMessageFromEvents（不 import 池实现，简报约束）。
 
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { createEventChannel } from '../event-channel.mjs';
-import { createSseParser } from '../../adapters/sse-reader.mjs';
+import { createSseParser, utf8TextChunks } from '../../adapters/sse-reader.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 import { DEFAULT_CHAT_HOST, DEFAULT_API_HOST, EP_EXCHANGE } from './constants.mjs';
 import { soloHeaders } from './headers.mjs';
@@ -21,6 +18,11 @@ import { createTraeDecoder, TraeStreamError } from './stream.mjs';
 import { createTokenManager } from './auth.mjs';
 import { createTraeQuotaCache } from './quota.mjs';
 import { createTraeModelCatalog } from './models.mjs';
+import { anthropicMessageFromEvents as aggregateMessageFromEvents } from '../../adapters/anthropic-message.mjs';
+import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
+
+/** 兜底 message id 用池名，导出供测试与调用方共用（实现见 adapters/anthropic-message.mjs）。 */
+export const anthropicMessageFromEvents = (events) => aggregateMessageFromEvents(events, { fallbackId: 'msg_trae' });
 
 /** HTTP 层错误分类（流内 event:error 的分类在 stream.mjs classifyTraeStreamError）。 */
 export function classifyUpstreamError(status, bodyText) {
@@ -58,55 +60,6 @@ function errorFrom(cls, status) {
             ? 'invalid_request_error'
             : 'api_error',
   });
-}
-
-/** Anthropic 事件序列 → 完整 message JSON（非流式出站 / sendCollect 用）。 */
-export function anthropicMessageFromEvents(events) {
-  let message = null;
-  const blocks = [];
-  let stopReason = null;
-  let usage = { input_tokens: 0, output_tokens: 0 };
-  for (const ev of events) {
-    if (ev.type === 'message_start') {
-      message = ev.message;
-    } else if (ev.type === 'content_block_start') {
-      blocks[ev.index] = { ...ev.content_block, __parts: [] };
-    } else if (ev.type === 'content_block_delta') {
-      const block = blocks[ev.index];
-      if (!block) continue;
-      if (ev.delta?.type === 'text_delta') block.__parts.push(ev.delta.text ?? '');
-      else if (ev.delta?.type === 'thinking_delta') block.__parts.push(ev.delta.thinking ?? '');
-      else if (ev.delta?.type === 'input_json_delta') block.__parts.push(ev.delta.partial_json ?? '');
-    } else if (ev.type === 'message_delta') {
-      stopReason = ev.delta?.stop_reason ?? stopReason;
-      usage = { ...usage, ...(ev.usage ?? {}) };
-    }
-  }
-  const base = message ?? {
-    id: 'msg_trae',
-    type: 'message',
-    role: 'assistant',
-    model: 'unknown',
-    content: [],
-    stop_reason: null,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
-  const content = blocks.filter(Boolean).map((b) => {
-    const text = b.__parts.join('');
-    if (b.type === 'tool_use') {
-      let input = {};
-      try {
-        input = text ? JSON.parse(text) : {};
-      } catch {
-        input = {};
-      }
-      return { type: 'tool_use', id: b.id, name: b.name, input };
-    }
-    if (b.type === 'thinking') return { type: 'thinking', thinking: text };
-    return { type: 'text', text };
-  });
-  return { ...base, content, stop_reason: stopReason ?? base.stop_reason, usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens } };
 }
 
 export function createTraePool({
@@ -147,39 +100,9 @@ export function createTraePool({
   });
 
   /** refreshToken 轮换立即落盘（vendor client.go:366-367：旧 rt 换发即作废，重启丢盘 = 死号）。 */
-  function persistTokenPatch(accId, patch) {
-    if (!accountsFile) return;
-    try {
-      const dir = path.dirname(accountsFile);
-      const list = loadAccounts(dir);
-      const row = list.find((a) => a.id === accId);
-      if (!row) return;
-      Object.assign(row, patch);
-      saveAccounts(dir, list);
-    } catch (err) {
-      console.error(`[trae] token patch 落盘失败（${accId}）：${err?.message}`);
-    }
-  }
+  const persistTokenPatch = tokenPatchPersister(accountsFile, 'trae');
 
-  /** 流已开头后只能以 Anthropic error 事件收尾（不裸 destroy，客户端至少拿到可解析错误）。 */
-  function writeAnthropicError(res, err) {
-    res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: err.type, message: err.message } })}\n\n`);
-  }
-
-  function unavailable(cause) {
-    const info = scheduler.unavailableInfo();
-    if (!info.pool) {
-      return new HttpError(429, '没有可用账号，请检查账号状态', { type: 'rate_limit_error' });
-    }
-    if (!info.cooling && info.saturated) {
-      return new HttpError(429, '当前并发已满，请稍后重试', { type: 'rate_limit_error' });
-    }
-    const waitMs = Math.max(0, (info.soonestRecovery || scheduler.soonestRecovery()) - scheduler.now());
-    const suffix = cause ? `（最后错误：${cause}）` : '';
-    return new HttpError(429, `所有 Trae 账号暂不可用，约 ${Math.max(1, Math.ceil(waitMs / 60_000))} 分钟后恢复${suffix}`, {
-      type: 'rate_limit_error',
-    });
-  }
+  const unavailable = (cause) => unavailableError(scheduler, 'Trae', cause);
 
   async function consumeSse(upstream, { model, signal, onEvents }) {
     const decoder = createTraeDecoder({ model });
@@ -189,8 +112,7 @@ export function createTraePool({
       return finalEvents;
     }
     const parser = createSseParser();
-    for await (const chunk of Readable.fromWeb(upstream.body, { signal })) {
-      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    for await (const text of utf8TextChunks(Readable.fromWeb(upstream.body, { signal }))) {
       // 只在流末尾 drain：跨 chunk 半行不是完整事件（qoder 池同款教训）
       for (const { event, data } of parser.push(text)) {
         const { done, events } = decoder.pushEvent(event, data);
@@ -217,19 +139,9 @@ export function createTraePool({
     }
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let acc = null;
-      if (stickyKey) {
-        if (attempt === 0) {
-          const bound = scheduler.stickyGet(stickyKey, { readyOnly: true });
-          if (bound && !tried.has(bound.id)) acc = bound;
-          else scheduler.stickyClear(stickyKey);
-        } else {
-          scheduler.stickyClear(stickyKey);
-        }
-      }
-      if (!acc) acc = scheduler.pick({ exclude: tried, allowFallback: attempt > 0 });
+      // 选号：首试走粘性、重试解绑（公共件 pickAttemptAccount）
+      const acc = pickAttemptAccount(scheduler, stickyKey, attempt, tried);
       if (!acc) throw unavailable(lastError?.message);
-      tried.add(acc.id);
 
       const { token, patch } = await tokens.accessFor(acc);
       if (!token) {

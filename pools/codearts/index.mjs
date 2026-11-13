@@ -27,6 +27,11 @@ import { createTokenManager } from './auth.mjs';
 import { createCodeartsModelCatalog, accountKeyOf } from './models.mjs';
 import { fetchCreditCampaigns } from './checkin.mjs';
 import { createCodeartsQuotaCache } from './quota.mjs';
+import { anthropicMessageFromEvents as aggregateMessageFromEvents } from '../../adapters/anthropic-message.mjs';
+import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
+
+/** 兜底 message id 用池名，导出供测试与调用方共用（实现见 adapters/anthropic-message.mjs）。 */
+export const anthropicMessageFromEvents = (events) => aggregateMessageFromEvents(events, { fallbackId: 'msg_codearts' });
 
 /** HTTP 层错误分类。error_code 信封（HTTP 200 内嵌）也落到这里（合成 status）。 */
 export function classifyUpstreamError(status, bodyText) {
@@ -83,54 +88,6 @@ function errorFrom(cls, status) {
             : 'api_error',
   });
   return err;
-}
-
-/** Anthropic 事件序列 → 完整 message JSON（非流式出站 / sendCollect 用）。 */
-export function anthropicMessageFromEvents(events) {
-  let message = null;
-  const blocks = [];
-  let stopReason = null;
-  let usage = { input_tokens: 0, output_tokens: 0 };
-  for (const ev of events) {
-    if (ev.type === 'message_start') {
-      message = ev.message;
-    } else if (ev.type === 'content_block_start') {
-      blocks[ev.index] = { ...ev.content_block, __parts: [] };
-    } else if (ev.type === 'content_block_delta') {
-      const block = blocks[ev.index];
-      if (!block) continue;
-      if (ev.delta?.type === 'text_delta') block.__parts.push(ev.delta.text ?? '');
-      else if (ev.delta?.type === 'input_json_delta') block.__parts.push(ev.delta.partial_json ?? '');
-    } else if (ev.type === 'message_delta') {
-      stopReason = ev.delta?.stop_reason ?? stopReason;
-      usage = { ...usage, ...(ev.usage ?? {}) };
-    }
-  }
-  const base = message ?? {
-    id: 'msg_codearts',
-    type: 'message',
-    role: 'assistant',
-    model: 'unknown',
-    content: [],
-    stop_reason: null,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
-  const content = blocks.filter(Boolean).map((b) => {
-    const text = b.__parts.join('');
-    if (b.type === 'tool_use') {
-      let input = {};
-      try {
-        input = text ? JSON.parse(text) : {};
-      } catch {
-        input = {};
-      }
-      return { type: 'tool_use', id: b.id, name: b.name, input };
-    }
-    if (b.type === 'thinking') return { type: 'thinking', thinking: text };
-    return { type: 'text', text };
-  });
-  return { ...base, content, stop_reason: stopReason ?? base.stop_reason, usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens } };
 }
 
 /** chatBodyV2（client.go:476-506）：OpenAI 形状 + CodeArts 亲和字段。 */
@@ -247,38 +204,9 @@ export function createCodeartsPool({
   const tokens = createTokenManager({ fetchImpl, now, cfg: config.loginConfig });
 
   /** 刷新出的新 STS 凭证整组立即原子落盘（refresh_token 与 DPoP 公钥双绑定）。 */
-  function persistTokenPatch(accId, patch) {
-    if (!accountsFile) return;
-    try {
-      const dir = path.dirname(accountsFile);
-      const list = loadAccounts(dir);
-      const row = list.find((a) => a.id === accId);
-      if (!row) return;
-      Object.assign(row, patch);
-      saveAccounts(dir, list);
-    } catch (err) {
-      console.error(`[ca] token patch 落盘失败（${accId}）：${err?.message}`);
-    }
-  }
+  const persistTokenPatch = tokenPatchPersister(accountsFile, 'ca');
 
-  function writeAnthropicError(res, err) {
-    res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: err.type, message: err.message } })}\n\n`);
-  }
-
-  function unavailable(cause) {
-    const info = scheduler.unavailableInfo();
-    if (!info.pool) {
-      return new HttpError(429, '没有可用账号，请检查账号状态', { type: 'rate_limit_error' });
-    }
-    if (!info.cooling && info.saturated) {
-      return new HttpError(429, '当前并发已满，请稍后重试', { type: 'rate_limit_error' });
-    }
-    const waitMs = Math.max(0, (info.soonestRecovery || scheduler.soonestRecovery()) - scheduler.now());
-    const suffix = cause ? `（最后错误：${cause}）` : '';
-    return new HttpError(429, `所有 CodeArts 账号暂不可用，约 ${Math.max(1, Math.ceil(waitMs / 60_000))} 分钟后恢复${suffix}`, {
-      type: 'rate_limit_error',
-    });
-  }
+  const unavailable = (cause) => unavailableError(scheduler, 'CodeArts', cause);
 
   async function dispatch({ req, res, body, key, signal, collect }) {
     let lastError = null;
@@ -288,19 +216,9 @@ export function createCodeartsPool({
     const chatId = crypto.randomUUID();
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let acc = null;
-      if (stickyKey) {
-        if (attempt === 0) {
-          const bound = scheduler.stickyGet(stickyKey, { readyOnly: true });
-          if (bound && !tried.has(bound.id)) acc = bound;
-          else scheduler.stickyClear(stickyKey);
-        } else {
-          scheduler.stickyClear(stickyKey);
-        }
-      }
-      if (!acc) acc = scheduler.pick({ exclude: tried, allowFallback: attempt > 0 });
+      // 选号：首试走粘性、重试解绑（公共件 pickAttemptAccount）
+      const acc = pickAttemptAccount(scheduler, stickyKey, attempt, tried);
       if (!acc) throw unavailable(lastError?.message);
-      tried.add(acc.id);
 
       const { cred, patch, expired } = await tokens.accessFor(acc);
       if (!cred) {
@@ -433,20 +351,7 @@ export function createCodeartsPool({
       // 让 peek() 喂给 scheduler 与 /api/pools 均值，但不增加本次响应延迟。
       quota.get(acc).catch(() => {});
 
-      if (channel) {
-        channel.end();
-        return { status: 200, contentType: 'text/event-stream', events: channel };
-      }
-      if (streaming) {
-        res.end();
-        return;
-      }
-      const messageJson = anthropicMessageFromEvents(events);
-      const bodyText = JSON.stringify(messageJson);
-      if (collect) return { status: 200, contentType: 'application/json', bodyText };
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(bodyText);
-      return;
+      return finishAnthropicResponse({ res, collect, streaming, channel, events, toMessage: anthropicMessageFromEvents });
     }
 
     if (signal?.aborted) return;

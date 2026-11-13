@@ -4,9 +4,10 @@
 import crypto from 'node:crypto';
 import { userIdFromJwt } from '../../fingerprint.mjs';
 import { loadAccounts, saveAccounts } from './accounts.mjs';
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
 
 /** 第一步：创建登录流，返回给面板的 authorizeUrl + 面板自己持有的 pollToken。 */
-export async function createLoginFlow({ origin = 'https://zcode.z.ai', appVersion = '3.16.3', fetchImpl = fetch, now = Date.now } = {}) {
+export async function createLoginFlow({ origin = ZCODE_ORIGIN, appVersion = ZCODE_APP_VERSION, fetchImpl = fetch, now = Date.now } = {}) {
   const pollToken = crypto.randomBytes(32).toString('hex');
   const res = await fetchImpl(`${origin}/api/v1/oauth/cli/init`, {
     method: 'POST',

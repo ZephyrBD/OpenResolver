@@ -246,7 +246,7 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
         // SSE 头已发出，只能以错误帧收尾（客户端断开时 res.write 静默失败）
         res.write(
           `data: ${JSON.stringify({
-            error: { message: err?.message ?? '上游流中断', type: 'api_error', code: 502 },
+            error: { message: err?.message ?? '上游流中断', type: 'api_error', code: 'upstream_error' },
           })}\n\n`,
         );
       }

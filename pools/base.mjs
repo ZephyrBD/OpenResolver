@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, SETTING_KEYS, clampSetting, patchSettings as persistS
  * 与协议无关的多账号池调度器（文档 §6 / §6.1 / §6.2 / §6.3）。
  *
  * weight = (quotaFactor + idleBonus + successFactor) × manualWeight
- *   quotaFactor   = quotaRatio × 10        （null → 按 0，不惩罚）
+ *   quotaFactor   = quotaRatio × 10        （null → 借候选集均值，无已知值按 0；不惩罚）
  *   idleBonus     = min(闲置小时 × 0.5, 5)  （从未用过按 999 小时）
  *   successFactor = 最近 50 次成功率 × 3
  *   manualWeight  = clamp(0..20)；0 = 硬过滤
@@ -121,7 +121,7 @@ export function createPoolScheduler({
     if (own !== null) {
       quotaFactor = own * 10;
     } else {
-      // null 不惩罚：借用候选集中已知额度的均值；一个已知值都没有就按 0（彼此相等）
+      // null 不惩罚（规范 06 §6）：借用候选集中已知额度的均值；一个已知值都没有就按 0（彼此相等）
       const known = peers.map(ratioOf).filter((ratio) => ratio !== null);
       quotaFactor = known.length ? (known.reduce((sum, ratio) => sum + ratio, 0) / known.length) * 10 : 0;
     }

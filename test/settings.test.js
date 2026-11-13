@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_SETTINGS, loadSettings, patchSettings } from '../pools/settings.mjs';
-import { COOLDOWN } from '../pools/zcode/index.mjs';
 
 function tmpFile() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ugw-pool-settings-'));
@@ -62,13 +61,6 @@ test('patchSettings clamps values and persists them atomically', () => {
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(onDisk, next);
   assert.deepEqual(loadSettings({ file, env: {} }), next, '落盘后重新加载保持同值');
-});
-
-test('the zcode COOLDOWN table derives from DEFAULT_SETTINGS (no drift)', () => {
-  assert.equal(COOLDOWN.blocked, DEFAULT_SETTINGS.blockedCooldownMs);
-  assert.equal(COOLDOWN.busy, DEFAULT_SETTINGS.busyCooldownMs);
-  assert.equal(COOLDOWN.quota, DEFAULT_SETTINGS.quotaCooldownMs);
-  assert.equal(COOLDOWN.server, DEFAULT_SETTINGS.serverCooldownMs);
 });
 
 test('a corrupt settings file falls back to defaults without throwing', () => {

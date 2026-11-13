@@ -16,6 +16,8 @@ import { fetchCreditCampaigns } from './checkin.mjs';
 import { fetchCreditInfo, CREDIT_PATH } from './credit.mjs';
 import { SNAP_ENGINE_API_HOST } from './constants.mjs';
 
+import { createQuotaCacheSkeleton } from '../quota-cache.mjs';
+
 const DEFAULT_TTL_MS = 5 * 60_000;
 const DEFAULT_BACKOFF_MS = 60_000;
 const DEFAULT_BACKOFF_MAX_MS = 5 * 60_000;
@@ -139,8 +141,6 @@ export function createCodeartsQuotaCache({
   backoffMaxMs = DEFAULT_BACKOFF_MAX_MS,
   timeoutMs = 10_000,
 } = {}) {
-  const cache = new Map();
-  const inflight = new Map();
 
   const base = snapBase || SNAP_ENGINE_API_HOST;
 
@@ -164,7 +164,8 @@ export function createCodeartsQuotaCache({
     return fetchCreditCampaigns({ cred, snapBase: base, fetchImpl, signal });
   }
 
-  async function attempt(acc, key) {
+  // 双路并行回源（credit 主链路 + campaigns 展示），凭证只解析一次共用
+  async function attempt(acc, key, { cache }) {
     // /v1/pool/balance 串行 await 每个账号的 get()：两路上游共用同一个超时预算，
     // 否则一个卡死的端点会把 cc-switch 轮询和面板 quota 路由拖到 undici 默认 ~300s。
     const signal = Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
@@ -228,37 +229,17 @@ export function createCodeartsQuotaCache({
     return resultOf(next, previous.fetchedAt ? 'stale' : 'unknown', next.error);
   }
 
-  async function get(acc) {
-    const key = entryKey(acc);
-    const t = now();
-    const entry = cache.get(key);
-    if (entry && !entry.error && t - entry.fetchedAt < ttlMs) {
-      return resultOf(entry, 'live');
-    }
-    if (entry && entry.nextAttemptAt > t) {
-      return resultOf(entry, entry.fetchedAt ? 'stale' : 'unknown', entry.error);
-    }
-    const pending = inflight.get(key);
-    if (pending) return pending;
-    const promise = attempt(acc, key).finally(() => inflight.delete(key));
-    inflight.set(key, promise);
-    return promise;
-  }
-
-  /** 同步读最近一次成功值，供调度器 quotaRatio 用；无数据返回 null。 */
-  function peek(acc) {
-    const entry = cache.get(entryKey(acc));
-    return typeof entry?.ratio === 'number' ? entry.ratio : null;
-  }
-
-  /** 领取成功后清缓存：按账号删 entry（连同退避计数），下个 get 即回源；无参全清。 */
-  function invalidate(acc) {
-    if (acc == null) {
-      cache.clear();
-      return;
-    }
-    cache.delete(entryKey(acc));
-  }
-
-  return { get, peek, invalidate };
+  return createQuotaCacheSkeleton({
+    now,
+    ttlMs,
+    backoffBaseMs,
+    backoffMaxMs,
+    // supported:false 也是合法缓存态（账号无套餐），新鲜判定只看有无错误
+    isFresh: (entry) => !entry.error,
+    staleSource: (entry) => (entry.fetchedAt ? 'stale' : 'unknown'),
+    errorOf: (err) => err?.message || '积分额度查询失败',
+    attempt,
+    toResult: resultOf,
+  });
 }
+

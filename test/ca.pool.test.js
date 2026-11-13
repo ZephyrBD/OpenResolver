@@ -12,6 +12,16 @@ import { startGateway, seedDb } from './helpers/gateway.mjs';
 import { createCodeartsPool, classifyUpstreamError, buildCaPayload, sessionIdFor } from '../pools/codearts/index.mjs';
 import { identityFromRefreshToken, accountFromToken } from '../pools/codearts/auth.mjs';
 import { embeddedSseStatus } from '../pools/codearts/stream.mjs';
+
+/** 轮询直到谓词为真（fire-and-forget 场景等待，参照 zcode.abort.test.js）。 */
+async function waitFor(fn, timeoutMs = 3000) {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) return false;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return true;
+}
 import { boot } from '../boot.mjs';
 import { signRequest } from '../pools/codearts/signer.mjs';
 import { EP_CHAT_V2 } from '../pools/codearts/constants.mjs';
@@ -425,8 +435,8 @@ test('quota：dispatch 后 fire-and-forget 拉取积分，peek 非 null（调度
   const res = await runMessages(base, full, { model: 'codearts/glm-5.2', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] });
   assert.equal(res.status, 200);
 
-  // fire-and-forget：等微任务 + 桩响应落定
-  await new Promise((r) => setTimeout(r, 100));
+  // fire-and-forget：轮询等额度回源落定（不真等固定时长）
+  assert.equal(await waitFor(() => pool.quota.peek(pool.scheduler.accounts[0]) !== null), true, '额度应回源落定');
   const acc = pool.scheduler.accounts[0];
   assert.equal(pool.quota.peek(acc), 0.75, '剩余 750 / 总额 1000');
   const snap = pool.scheduler.snapshot().find((a) => a.id === acc.id);

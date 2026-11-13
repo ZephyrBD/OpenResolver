@@ -1,4 +1,4 @@
-// 积分查询 + 签到状态（只读）+ 退避缓存。结构照抄 pools/qoder/quota.mjs（不 import）。
+// 积分查询 + 签到状态（只读）。缓存骨架共用 pools/quota-cache.mjs，本文件只保留上游事实。
 //
 // 端点/头/字段名参照 vendor/cpa-trae/trae/upstream/client.go（MIT）：ide_user_ent_usage 的
 // user_entitlement_pack_list[].entitlement_base_info.quota.credits_limit、checkin_credits/status
@@ -13,6 +13,8 @@
 
 import { DEFAULT_BIZ_HOST, EP_ENT_USAGE, EP_CHECKIN_STATUS } from './constants.mjs';
 import { ugHeaders } from './headers.mjs';
+
+import { createQuotaCacheSkeleton } from '../quota-cache.mjs';
 
 const DEFAULT_TTL_MS = 5 * 60_000;
 const DEFAULT_BACKOFF_MS = 60_000;
@@ -137,8 +139,6 @@ export function createTraeQuotaCache({
   backoffMaxMs = DEFAULT_BACKOFF_MAX_MS,
   timeoutMs = 10_000,
 } = {}) {
-  const cache = new Map();
-  const inflight = new Map();
 
   async function fetchUsage(acc) {
     const res = await fetchImpl(usageUrl || `${bizHost}${EP_ENT_USAGE}`, {
@@ -165,67 +165,19 @@ export function createTraeQuotaCache({
     return checkinFrom(await res.json());
   }
 
-  async function attempt(acc, key) {
-    try {
+  return createQuotaCacheSkeleton({
+    now,
+    ttlMs,
+    backoffBaseMs,
+    backoffMaxMs,
+    fetchOne: async (acc) => {
       const json = await fetchUsage(acc);
-      const next = {
-        ratio: ratioFrom(json),
-        ...detailsFrom(json),
-        checkin: null,
-        fetchedAt: now(),
-        error: null,
-        failures: 0,
-        nextAttemptAt: 0,
-      };
-      cache.set(key, next);
-      // 签到状态是展示项：慢/失败不拖 ratio 主链路，成功后回填同一条目
-      try {
-        next.checkin = await fetchCheckin(acc);
-      } catch {
-        // 保留 null，下次刷新再试
-      }
-      return resultOf(next, 'live');
-    } catch (err) {
-      const previous = cache.get(key) ?? { ratio: null, checkin: null, fetchedAt: 0, failures: 0 };
-      const failures = (previous.failures ?? 0) + 1;
-      const backoff = Math.min(backoffBaseMs * 2 ** (failures - 1), backoffMaxMs);
-      const next = { ...previous, error: err?.message || '积分查询失败', failures, nextAttemptAt: now() + backoff };
-      cache.set(key, next);
-      return resultOf(next, next.ratio === null ? 'unknown' : 'stale', next.error);
-    }
-  }
-
-  async function get(acc) {
-    const key = entryKey(acc);
-    const t = now();
-    const entry = cache.get(key);
-    if (entry && entry.ratio !== null && !entry.error && t - entry.fetchedAt < ttlMs) {
-      return resultOf(entry, 'live');
-    }
-    if (entry && entry.nextAttemptAt > t) {
-      return resultOf(entry, entry.ratio === null ? 'unknown' : 'stale', entry.error);
-    }
-    const pending = inflight.get(key);
-    if (pending) return pending;
-    const promise = attempt(acc, key).finally(() => inflight.delete(key));
-    inflight.set(key, promise);
-    return promise;
-  }
-
-  /** 同步读最近一次成功值，供调度器 quotaRatio 用；无数据返回 null。 */
-  function peek(acc) {
-    const entry = cache.get(entryKey(acc));
-    return typeof entry?.ratio === 'number' ? entry.ratio : null;
-  }
-
-  /** 领取成功后清缓存：按账号删 entry（连同退避计数），下个 get 即回源；无参全清。 */
-  function invalidate(acc) {
-    if (acc == null) {
-      cache.clear();
-      return;
-    }
-    cache.delete(entryKey(acc));
-  }
-
-  return { get, peek, invalidate };
+      return { ratio: ratioFrom(json), ...detailsFrom(json), checkin: null };
+    },
+    // 签到状态是展示项：慢/失败不拖 ratio 主链路，成功后回填同一条目
+    afterFetch: async (entry, acc) => ({ checkin: await fetchCheckin(acc) }),
+    toResult: resultOf,
+    errorOf: (err) => err?.message || '积分查询失败',
+  });
 }
+

@@ -6,25 +6,12 @@ import { sendJson } from '../http/respond.mjs';
 import { readJson, DEFAULT_MAX_BODY_BYTES } from '../http/body.mjs';
 import { SETTING_KEYS } from '../pools/settings.mjs';
 import { loadAccounts, saveAccounts } from '../pools/zcode/accounts.mjs';
-import { createLoginFlow as zcCreateLoginFlow, pollLogin as zcPollLogin, persistAccount as persistZcAccount } from '../pools/zcode/onboard.mjs';
 import { deviceIdFor, sessionIdFor } from '../fingerprint.mjs';
-import { buildLoginUrl, accountFromCallback as traeAccountFromCallback, persistAccount as persistTraeAccount } from '../pools/trae/login-link.mjs';
-import { accountFromPat as qoderAccountFromPat, persistAccount as persistQoderAccount } from '../pools/qoder/onboard.mjs';
-import { createLoginFlow as wbCreateLoginFlow, pollLoginAccount as wbPollLoginAccount, accountFromPoll as wbAccountFromPoll, persistAccount as persistWbAccount } from '../pools/workbuddy/onboard.mjs';
-import {
-  createLoginFlow as caCreateLoginFlow,
-  exchangeCode as caExchangeCode,
-  pollTicket as caPollTicket,
-  accountFromToken as caAccountFromToken,
-  parseCallback as caParseCallback,
-  persistAccount as persistCaAccount,
-} from '../pools/codearts/onboard.mjs';
-import { LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/auth.mjs';
 
 // CodeArts 登录端点默认值来自 LOGIN_CONFIG_DEFAULTS（生产华为云）；
 // 测试可经 createPanelGateway({ caLoginConfig }) 注入桩 host。
-import { ENDPOINT_CN as WB_ENDPOINT_CN, ENDPOINT_GLOBAL as WB_ENDPOINT_GLOBAL } from '../pools/workbuddy/constants.mjs';
-import { loadIdentitySeed } from '../pools/qoder/identity.mjs';
+import { BILLING_ENDPOINT_CN, BILLING_ENDPOINT_GLOBAL } from '../pools/workbuddy/constants.mjs';
+import { ZCODE_ORIGIN } from '../pools/zcode/constants.mjs';
 import { createKey } from '../auth/keys.mjs';
 import { saveKeys } from '../auth/store.mjs';
 import {
@@ -49,152 +36,35 @@ import {
   clearCsrfCookie,
 } from './admin.mjs';
 import { newCsrfToken, csrfOk, sameOrigin } from './csrf.mjs';
+import { LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/auth.mjs';
 import { createStaticHandler } from './static.mjs';
+import { createOnboardHandlers } from './onboard-handlers.mjs';
+import {
+  SECURITY_HEADERS,
+  SENSITIVE_FIELDS,
+  ACCOUNT_PATCH_FIELDS,
+  FLOW_TTL_MS,
+  clampManual,
+  claimerCheckinOf,
+  safeDecode,
+  poolByName,
+  sched,
+  keyView,
+  runtimeAccount,
+  upsertRuntimeAccount,
+  accountView,
+  displayNameOf,
+} from './shared.mjs';
 import { readJson as readJsonFile, writeJson as writeJsonFile } from './store.mjs';
+
+// 兼容既有导入方（test/quota.route.test.js 等从 api.mjs 取视图函数）
+export { accountView, displayNameOf };
 
 /**
  * 面板网关（文档 §9.2 / §10 / §12）：管理员认证 + CSRF + 面板 API + 静态挂载点。
  * 独立于推理面：gateway.mjs 只挂一个 handle(req,res) 分流；推理面（/v1/*）与本模块无关。
  */
 
-const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:",
-  'X-Frame-Options': 'DENY',
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-};
-
-const FLOW_TTL_MS = 10 * 60_000;
-const SENSITIVE_FIELDS = ['jwt', 'refreshToken', 'pat', 'jobToken', 'jobRefreshToken'];
-const ACCOUNT_PATCH_FIELDS = ['label', 'manualWeight', 'enabled'];
-
-function clampManual(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 10;
-  return Math.min(20, Math.max(0, n));
-}
-
-/** claimer.status 的字段形状映射（对齐 zcode/claim.mjs / trae/checkin.mjs：checkedIn/credits/message/details）。 */
-function claimerCheckinOf(st) {
-  const out = {
-    checkedIn: st?.checkedIn === true,
-    credits: Number(st?.credits) || 0,
-    message: st?.message ?? '',
-    supported: st?.supported === true,
-  };
-  const streakDays = Number(st?.details?.streakDays ?? st?.streakDays);
-  if (Number.isFinite(streakDays)) out.streakDays = streakDays;
-  if (typeof st?.details?.active === 'boolean') out.active = st.details.active;
-  return out;
-}
-
-function safeDecode(v) {
-  try {
-    return decodeURIComponent(v);
-  } catch {
-    throw new HttpError(400, 'URL 编码非法', { type: 'invalid_request_error' });
-  }
-}
-
-function poolByName(pools, name) {
-  if (!/^[a-z0-9-]+$/.test(name || '')) throw new HttpError(404, `未知池 "${name}"`, { type: 'not_found_error' });
-  const pool = pools.find((p) => p.name === name);
-  if (!pool) throw new HttpError(404, `未知池 "${name}"`, { type: 'not_found_error' });
-  return pool;
-}
-
-/** 各池把 base 调度器包在 `.scheduler` 子对象里（snapshot/settings/patchSettings/updateAccount 在其上）。 */
-function sched(pool) {
-  return pool.scheduler ?? pool;
-}
-
-/** 凭证只回显尾 4 位；敏感字段绝不出现在面板响应里。 */
-export function accountView(acc) {
-  const view = {
-    id: acc.id,
-    label: acc.label ?? '',
-    enabled: acc.enabled,
-    state: acc.state ?? 'ok',
-    manualWeight: acc.manualWeight,
-    weight: acc.weight ?? acc.manualWeight ?? 10,
-    email: acc.email ?? '',
-    userID: acc.userID ?? '',
-    uid: acc.uid ?? '',
-    nickname: acc.nickname ?? '',
-    machineID: acc.machineID ?? acc.machineId ?? '',
-    deviceId: acc.deviceId ?? '',
-    expiresAt: acc.expiresAt ?? 0,
-    jobTokenExpiresAt: acc.jobTokenExpiresAt ?? 0,
-    createdAt: acc.createdAt ?? 0,
-    lastUsedAt: acc.lastUsedAt ?? 0,
-    inFlight: acc.inFlight ?? 0,
-    cooldownUntil: acc.cooldownUntil ?? 0,
-    cooldownRemainingMs: Math.max(0, (acc.cooldownUntil ?? 0) - Date.now()),
-    cooldownKind: acc.cooldownKind ?? null,
-    consecutiveFails: acc.consecutiveFails ?? 0,
-    quotaRatio: typeof acc.quotaRatio === 'number' ? acc.quotaRatio : null,
-  };
-  for (const field of SENSITIVE_FIELDS) {
-    if (acc[field]) view[field] = `***${String(acc[field]).slice(-4)}`;
-  }
-  return view;
-}
-
-/** 名称主显示：label → nickname → email → id（面板用它做主标识，id 退居次级）。 */
-export function displayNameOf(acc) {
-  return String(acc?.label || acc?.nickname || acc?.email || acc?.id || '');
-}
-
-function keyView(key) {
-  // keyHash 不回显：面板只需要元数据
-  return {
-    id: key.id,
-    name: key.name,
-    prefix: key.prefix,
-    createdAt: key.createdAt,
-    expiresAt: key.expiresAt,
-    tokenQuota: key.tokenQuota,
-    usedTokens: key.usedTokens,
-    rpm: key.rpm,
-    ipAllowlist: key.ipAllowlist,
-    enabledPools: key.enabledPools,
-    enabled: key.enabled,
-  };
-}
-
-/**
- * 运行态账号对象（对齐 pools/base.mjs runtimeOf 的字段）：pick/weightOf/snapshot 依赖
- * inFlight/outcomes 等字段，直接 push 裸账号对象会坏调度。
- */
-function runtimeAccount(pool, account) {
-  const acc = {
-    ...account,
-    id: account.id,
-    manualWeight: clampManual(account.manualWeight ?? account.weight ?? 10),
-    enabled: account.enabled !== false && account.enabled !== 0,
-    state: account.state ?? 'ok',
-    inFlight: 0,
-    cooldownUntil: 0,
-    cooldownKind: null,
-    consecutiveFails: 0,
-    lastUsedAt: account.lastUsedAt ?? 0,
-    outcomes: [],
-  };
-  if (pool.name === 'zcode' && (!acc.deviceId || !acc.sessionId) && acc.uid != null) {
-    acc.deviceId = acc.deviceId || deviceIdFor(acc.uid);
-    acc.sessionId = acc.sessionId || sessionIdFor(acc.uid);
-  }
-  return acc;
-}
-
-/** 运行态与磁盘同步：同 id 先删再插（新增/覆盖），返回插入后的运行态对象。 */
-function upsertRuntimeAccount(pool, account) {
-  const idx = pool.accounts.findIndex((a) => a.id === account.id);
-  if (idx >= 0) pool.accounts.splice(idx, 1);
-  const acc = runtimeAccount(pool, account);
-  pool.accounts.push(acc);
-  return acc;
-}
 
 export function createPanelGateway({
   config = {},
@@ -210,11 +80,11 @@ export function createPanelGateway({
   traeApiHost,
   qoderExchangeUrl,
   qoderUserinfoUrl,
-  wbEndpointCn = process.env.UGW_WB_ENDPOINT_CN,
-  wbEndpointGlobal = process.env.UGW_WB_ENDPOINT_GLOBAL,
+  wbEndpointCn = process.env.UGW_WB_ENDPOINT_CN || BILLING_ENDPOINT_CN,
+  wbEndpointGlobal = process.env.UGW_WB_ENDPOINT_GLOBAL || BILLING_ENDPOINT_GLOBAL,
   caLoginConfig,
   sessionTtlMs = SESSION_TTL_MS,
-  zcodeOrigin = process.env.UGW_ZCODE_ORIGIN || 'https://zcode.z.ai',
+  zcodeOrigin = process.env.UGW_ZCODE_ORIGIN || ZCODE_ORIGIN,
   claimers = {},
   claimScheduler = null,
 } = {}) {
@@ -265,7 +135,7 @@ export function createPanelGateway({
     clearLoginFailures(securityFile, ip);
     const sessionId = createSession(sessionsFile, { now });
     const csrfToken = newCsrfToken();
-    res.setHeader('Set-Cookie', [sessionCookie(sessionId, { secure: secureCookie }), csrfCookie(csrfToken)]);
+    res.setHeader('Set-Cookie', [sessionCookie(sessionId, { secure: secureCookie }), csrfCookie(csrfToken, { secure: secureCookie })]);
     logLoginAttempt(loginLogFile, { ip, ok: true, reason: '' });
     return sendJson(res, 200, { ok: true, csrfToken });
   }
@@ -276,7 +146,7 @@ export function createPanelGateway({
       throw new HttpError(403, 'CSRF 校验失败', { type: 'forbidden' });
     }
     revokeSession(sessionsFile, cookies[SESSION_COOKIE]);
-    res.setHeader('Set-Cookie', [clearSessionCookie({ secure: secureCookie }), clearCsrfCookie()]);
+    res.setHeader('Set-Cookie', [clearSessionCookie({ secure: secureCookie }), clearCsrfCookie({ secure: secureCookie })]);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -353,8 +223,12 @@ export function createPanelGateway({
           throw new HttpError(409, `账号 id "${body.id}" 已存在，不能覆盖`, { type: 'invalid_request_error' });
         }
       }
+      // 凭证/元数据字段按池自由携带，但调度运行态（内部字段）不允许客户端注入
+      const RUNTIME_ONLY_FIELDS = ['inFlight', 'cooldownUntil', 'cooldownKind', 'consecutiveFails', 'outcomes', 'state', 'lastUsedAt'];
+      const { ...clean } = body;
+      for (const f of RUNTIME_ONLY_FIELDS) delete clean[f];
       const account = {
-        ...body,
+        ...clean,
         id: typeof body.id === 'string' && body.id ? body.id : `${pool.name}-${crypto.randomUUID().slice(0, 8)}`,
         createdAt: body.createdAt ?? Date.now(),
         enabled: body.enabled !== false,
@@ -412,234 +286,26 @@ export function createPanelGateway({
     throw new HttpError(405, `${req.method} 不支持`, { type: 'api_error' });
   }
 
-  function pruneFlows() {
-    const flows = readJsonFile(flowsFile, { flows: {} });
-    const kept = {};
-    for (const [id, flow] of Object.entries(flows?.flows || {})) {
-      if (now() - flow.createdAt < FLOW_TTL_MS) kept[id] = flow;
-    }
-    return { flows: kept, dirty: Object.keys(kept).length !== Object.keys(flows?.flows || {}).length };
-  }
-
-  /**
-   * 签到列以领取链路（claimer.status）为准 —— claimer.run 是领取实际走的那条链路，
-   * quota 模块自带的签到查询与之矛盾（trae 已废弃 GET 契约、workbuddy 打错上游域）：
-   * - status 成功且 supported=true → 用它覆盖 quota 自带值；
-   * - status 抛错 → 保留 quota 自带 checkin 不覆盖；
-   * - supported=false（如"国际版无每日签到"）→ quota 自带值优先，其缺 checkin
-   *   时用 claimer 的 message 兜底（否则该提示永远显示不出来）。
-   */
-  async function claimerCheckin(claimer, acc, base) {
-    if (!claimer?.status) return base ?? null;
-    let st = null;
-    try {
-      st = await claimer.status(acc);
-    } catch {
-      return base ?? null;
-    }
-    const mapped = claimerCheckinOf(st);
-    if (st && st.supported === true) return mapped;
-    return base ? base : { ...mapped };
-  }
-
-  /** 登录即领取共用：run 之后必须清该账号 quota 缓存，额度明细才不会回显旧值。 */
-  async function claimAndInvalidate(pool, claimer, acc) {
-    const claim = await claimer.run(acc);
-    pool.quota?.invalidate?.(acc);
-    return claim;
-  }
-
-  async function handleOnboard(req, res, url) {
-    if (url.pathname === '/api/onboard/zcode' && req.method === 'POST') {
-      // 两段式：link 生成 authorize_url（flow 存 pollToken）；poll 轮询至 ready 入库
-      const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-      if (body.action === 'link') {
-        const flow = await zcCreateLoginFlow({ origin: zcodeOrigin, fetchImpl, now });
-        const { flows, dirty } = pruneFlows();
-        if (dirty) writeJsonFile(flowsFile, { flows });
-        const flowId = flow.flowId;
-        flows[flowId] = { pollToken: flow.pollToken, kind: 'zcode', createdAt: now() };
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, { authorizeUrl: flow.authorizeUrl, flowId, pollIntervalSec: flow.pollIntervalSec ?? 2, expiresAt: flow.expiresAt });
-      }
-      if (body.action === 'poll') {
-        if (!body.flowId) throw new HttpError(400, '缺少 flowId：请先生成登录链接', { type: 'invalid_request_error' });
-        const { flows } = pruneFlows();
-        const flow = flows[body.flowId];
-        if (!flow || flow.kind !== 'zcode') throw new HttpError(404, 'onboard flow 不存在或已过期（10 分钟有效期，请重新生成登录链接）', { type: 'not_found_error' });
-        const out = await zcPollLogin({ origin: zcodeOrigin, flowId: body.flowId, pollToken: flow.pollToken, fetchImpl, now });
-        if (out.status !== 'ready') return sendJson(res, 200, { status: out.status, flowId: body.flowId });
-        const pool = poolByName(pools, 'zcode');
-        persistZcAccount(accountsDirOf(pool), out.account);
-        delete flows[body.flowId];
-        writeJsonFile(flowsFile, { flows });
-        const acc = upsertRuntimeAccount(pool, out.account);
-        // 登录即领取（best-effort）：结果随响应带回，失败不阻断入库
-        let claim = null;
-        const claimer = claimers.zcode;
-        if (claimer && acc.enabled !== false) {
-          try {
-            claim = await claimAndInvalidate(pool, claimer, acc);
-          } catch (err) {
-            claim = { ok: false, status: 'failed', message: err?.message || String(err) };
-          }
-        }
-        return sendJson(res, 200, { status: 'ready', account: accountView(acc), claim });
-      }
-      throw new HttpError(400, 'action 必须是 link 或 poll', { type: 'invalid_request_error' });
-    }
-    if (url.pathname === '/api/onboard/trae/link' && req.method === 'GET') {
-      const { flows, dirty } = pruneFlows();
-      if (dirty) writeJsonFile(flowsFile, { flows });
-      const machineId = crypto.randomBytes(16).toString('hex');
-      const deviceId = crypto.randomBytes(16).toString('hex');
-      const flowId = crypto.randomUUID();
-      flows[flowId] = { machineId, deviceId, createdAt: now() };
-      writeJsonFile(flowsFile, { flows });
-      return sendJson(res, 200, { url: buildLoginUrl({ machineId, deviceId }), machineId, deviceId, flowId });
-    }
-    if (url.pathname === '/api/onboard/trae/callback' && req.method === 'POST') {
-      const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-      if (!body.flowId) {
-        throw new HttpError(400, '缺少 flowId：请先点「生成登录链接」再登录粘贴回调', { type: 'invalid_request_error' });
-      }
-      const { flows } = pruneFlows();
-      const flow = flows[body.flowId];
-      if (!flow) throw new HttpError(404, 'onboard flow 不存在或已过期（10 分钟有效期，请重新生成登录链接）', { type: 'not_found_error' });
-      if (typeof body.callbackUrl !== 'string' || !body.callbackUrl) {
-        throw new HttpError(400, 'callbackUrl 不能为空', { type: 'invalid_request_error' });
-      }
-      const account = await traeAccountFromCallback(body.callbackUrl, {
-        machineId: flow.machineId,
-        deviceId: flow.deviceId,
-        apiHost: traeApiHost,
-        fetchImpl,
-      });
-      const pool = poolByName(pools, 'trae');
-      const dir = accountsDirOf(pool);
-      persistTraeAccount(account, { dataDir: dir });
-      delete flows[body.flowId]; // flow 一次性
-      writeJsonFile(flowsFile, { flows });
-      return sendJson(res, 200, { account: accountView(upsertRuntimeAccount(pool, account)) });
-    }
-    if (url.pathname === '/api/onboard/qoder' && req.method === 'POST') {
-      const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-      if (body.region !== 'cn' && body.region !== 'global') {
-        throw new HttpError(400, 'region 必须是 cn 或 global', { type: 'invalid_request_error' });
-      }
-      if (typeof body.pat !== 'string' || !body.pat) {
-        throw new HttpError(400, 'pat 不能为空', { type: 'invalid_request_error' });
-      }
-      const { account } = await qoderAccountFromPat(body.pat, body.region, {
-        identitySeed: loadIdentitySeed(dataDir),
-        fetchImpl,
-        exchangeUrl: qoderExchangeUrl,
-        userinfoUrl: qoderUserinfoUrl,
-      });
-      if (!account) {
-        throw new HttpError(400, 'userinfo 未返回 userID，PAT 可能无效或权限不足', { type: 'invalid_request_error' });
-      }
-      const pool = poolByName(pools, body.region === 'cn' ? 'qoder-cn' : 'qoder');
-      persistQoderAccount(accountsDirOf(pool), account, { force: true });
-      return sendJson(res, 200, { account: accountView(upsertRuntimeAccount(pool, account)) });
-    }
-    if (url.pathname === '/api/onboard/workbuddy' && req.method === 'POST') {
-      const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-      if (body.region !== 'cn' && body.region !== 'global') {
-        throw new HttpError(400, 'region 必须是 cn 或 global', { type: 'invalid_request_error' });
-      }
-      const endpoint = (body.region === 'cn' ? wbEndpointCn : wbEndpointGlobal) || (body.region === 'cn' ? WB_ENDPOINT_CN : WB_ENDPOINT_GLOBAL);
-      if (body.action === 'link') {
-        // 两段式第一段：生成登录链接，state 存 flow（onboard-flows 复用 trae 存储）
-        const { flows, dirty } = pruneFlows();
-        if (dirty) writeJsonFile(flowsFile, { flows });
-        const flow = await wbCreateLoginFlow({ endpoint, fetchImpl })();
-        const flowId = crypto.randomUUID();
-        flows[flowId] = { state: flow.state, region: body.region, endpoint, createdAt: now() };
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, { loginUrl: flow.loginUrl, state: flow.state, flowId });
-      }
-      if (body.action === 'poll') {
-        // 两段式第二段：轮询 login/account → 落账号
-        if (!body.flowId) {
-          throw new HttpError(400, '缺少 flowId：请先点「生成登录链接」', { type: 'invalid_request_error' });
-        }
-        const { flows } = pruneFlows();
-        const flow = flows[body.flowId];
-        if (!flow) throw new HttpError(404, 'onboard flow 不存在或已过期（10 分钟有效期，请重新生成登录链接）', { type: 'not_found_error' });
-        const result = await wbPollLoginAccount({ state: flow.state, region: flow.region, endpoint: flow.endpoint, fetchImpl });
-        if (!result) return sendJson(res, 200, { pending: true, flowId: body.flowId });
-        const account = wbAccountFromPoll(result);
-        const pool = poolByName(pools, flow.region === 'cn' ? 'workbuddy-cn' : 'workbuddy');
-        if (!pool) {
-          throw new HttpError(503, `WorkBuddy ${flow.region} 池未启用（boot 需 UGW_WB=1）`, { type: 'api_error' });
-        }
-        persistWbAccount(account, { dataDir: accountsDirOf(pool) });
-        delete flows[body.flowId]; // flow 一次性
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, { account: accountView(upsertRuntimeAccount(pool, account)) });
-      }
-      throw new HttpError(400, 'action 必须是 link 或 poll', { type: 'invalid_request_error' });
-    }
-    if (url.pathname === '/api/onboard/codearts' && req.method === 'POST') {
-      // 两段式：link 生成 PKCE+DPoP+ticket 授权链接（flow 存 onboard-flows，含
-      // dpopJwk 私钥——data/ 是机密目录，与 accounts.json 同级安全边界）；
-      // callback 粘贴回跳 URL（带 code）或 poll 走 ticket 轮询兜底。
-      const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
-      if (body.action === 'link') {
-        const { flows, dirty } = pruneFlows();
-        if (dirty) writeJsonFile(flowsFile, { flows });
-        const flow = caCreateLoginFlow({ cfg: LOGIN_CONFIG, port: Number(body.port) || 1455 });
-        const flowId = crypto.randomUUID();
-        flows[flowId] = { ...flow, createdAt: now() };
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, { authorizeUrl: flow.authorizeUrl, flowId });
-      }
-      const finishWithToken = async (flow, token) => {
-        const account = caAccountFromToken(token, { codeVerifier: flow.codeVerifier, dpopJwk: flow.dpopJwk });
-        const pool = poolByName(pools, 'codearts');
-        if (!pool) {
-          throw new HttpError(503, 'CodeArts 池未启用（boot 组装失败）', { type: 'api_error' });
-        }
-        persistCaAccount(account, { dataDir: accountsDirOf(pool) });
-        return { account: accountView(upsertRuntimeAccount(pool, account)) };
-      };
-      if (body.action === 'callback') {
-        if (!body.flowId) {
-          throw new HttpError(400, '缺少 flowId：请先点「生成授权链接」', { type: 'invalid_request_error' });
-        }
-        if (typeof body.callbackUrl !== 'string' || !body.callbackUrl) {
-          throw new HttpError(400, 'callbackUrl 不能为空：请粘贴浏览器回跳的完整 URL', { type: 'invalid_request_error' });
-        }
-        const { flows } = pruneFlows();
-        const flow = flows[body.flowId];
-        if (!flow) throw new HttpError(404, 'onboard flow 不存在或已过期（10 分钟有效期，请重新生成授权链接）', { type: 'not_found_error' });
-        const { code, port } = caParseCallback(body.callbackUrl);
-        if (!code) throw new HttpError(400, '回调 URL 未包含 code 参数', { type: 'invalid_request_error' });
-        const token = await caExchangeCode({ cfg: LOGIN_CONFIG, code, codeVerifier: flow.codeVerifier, port, dpopJwk: flow.dpopJwk, fetchImpl });
-        const out = await finishWithToken(flow, token);
-        delete flows[body.flowId]; // flow 一次性
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, out);
-      }
-      if (body.action === 'poll') {
-        if (!body.flowId) {
-          throw new HttpError(400, '缺少 flowId：请先点「生成授权链接」', { type: 'invalid_request_error' });
-        }
-        const { flows } = pruneFlows();
-        const flow = flows[body.flowId];
-        if (!flow) throw new HttpError(404, 'onboard flow 不存在或已过期（10 分钟有效期，请重新生成授权链接）', { type: 'not_found_error' });
-        const token = await caPollTicket({ cfg: LOGIN_CONFIG, ticketId: flow.ticketId, secret: flow.secret, fetchImpl });
-        if (!token) return sendJson(res, 200, { pending: true, flowId: body.flowId });
-        const out = await finishWithToken(flow, token);
-        delete flows[body.flowId]; // flow 一次性
-        writeJsonFile(flowsFile, { flows });
-        return sendJson(res, 200, out);
-      }
-      throw new HttpError(400, 'action 必须是 link、callback 或 poll', { type: 'invalid_request_error' });
-    }
-    throw new HttpError(404, `${req.method} ${url.pathname} 不存在`, { type: 'not_found_error' });
-  }
+  // onboard/领取公共块拆分至 onboard-handlers.mjs（02 §4）：闭包状态经 ctx 穿线
+  const { pruneFlows, claimerCheckin, claimAndInvalidate, handleOnboard } = createOnboardHandlers({
+    flowsFile,
+    now,
+    fetchImpl,
+    config,
+    dataDir,
+    zcodeOrigin,
+    traeApiHost,
+    qoderExchangeUrl,
+    qoderUserinfoUrl,
+    wbEndpointCn,
+    wbEndpointGlobal,
+    loginConfig: LOGIN_CONFIG,
+    pools,
+    claimers,
+    accountsDirOf,
+    upsertRuntimeAccount,
+    accountView,
+  });
 
   async function handleKeys(req, res, url) {
     if (!db) throw new HttpError(503, '密钥库未加载', { type: 'api_error' });
@@ -859,6 +525,8 @@ export function createPanelGateway({
     } catch (err) {
       const known = err instanceof HttpError;
       if (!known) console.error('[panel] 未捕获错误:', err);
+      // 响应已开始（如流式回源中途抛错）时不能再写信封，只能断开，参照 gateway.mjs 的对称防护
+      if (res.headersSent) return res.destroy();
       const status = known ? err.status : 500;
       return sendJson(res, status, {
         error: { type: known ? err.type : 'api_error', message: known ? err.message : '面板内部错误' },

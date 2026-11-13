@@ -78,12 +78,20 @@ export function createSseParser() {
   return { push, drain, reset };
 }
 
+/** 字节/字符串流 → 跨 chunk 安全的 UTF-8 文本流：多字节字符被 chunk 切开时不产生 U+FFFD。 */
+export async function* utf8TextChunks(source) {
+  const decoder = new TextDecoder('utf-8');
+  for await (const chunk of source) {
+    yield typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+  }
+  const tail = decoder.decode();
+  if (tail) yield tail;
+}
+
 /** 把字节/字符串异步流变成 {event,data} 事件流。 */
 export async function* sseEvents(source) {
   const parser = createSseParser();
-  for await (const chunk of source) {
-    // web 流的 chunk 是裸 Uint8Array，没有 Buffer 的 toString(encoding)
-    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).toString('utf8');
+  for await (const text of utf8TextChunks(source)) {
     const events = parser.push(text);
     for (const ev of events) yield ev;
   }

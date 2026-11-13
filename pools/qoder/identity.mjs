@@ -1,4 +1,4 @@
-// machineIdFor 移植自 fingerprint.mjs deriveId（md5 → UUIDv4 形状），
+// machineId 复用 fingerprint.mjs deriveId（md5 → UUIDv4 形状），salt 固定 "qoder-machine"：
 // 语义对齐 pi-provider-qoder 的 machine id（§14.6）：不读 ~/.qoder，
 // seed 存 data/identity/qoder.json（{seed:<32hex>}，首次自动生成，0o600）。
 
@@ -6,11 +6,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { deriveId } from '../../fingerprint.mjs';
+
 /** md5("qoder-machine:" + seed) → UUIDv4 形状字符串。 */
 export function machineIdFor(seed) {
-  const h = crypto.createHash('md5').update(`qoder-machine:${seed || ''}`, 'utf8').digest('hex');
-  const patched = `${h.slice(0, 12)}4${h.slice(13, 16)}a${h.slice(17)}`;
-  return `${patched.slice(0, 8)}-${patched.slice(8, 12)}-${patched.slice(12, 16)}-${patched.slice(16, 20)}-${patched.slice(20, 32)}`;
+  return deriveId(seed || '', 'qoder-machine');
 }
 
 /** 每账号一个稳定 machineID：全局 seed + 账号 id 再派生。 */

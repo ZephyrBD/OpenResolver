@@ -4,9 +4,10 @@
 // run() 绝不抛出；同一账号的调用由调用方串行化。
 
 import { deviceIdFor, sessionIdFor } from '../../fingerprint.mjs';
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
 
-const DEFAULT_ORIGIN = 'https://zcode.z.ai';
-const DEFAULT_APP_VERSION = '3.16.3';
+const DEFAULT_ORIGIN = ZCODE_ORIGIN;
+const DEFAULT_APP_VERSION = ZCODE_APP_VERSION;
 const CLAIM_TIMEOUT_MS = 15_000;
 const BUDGET_MS = 25_000;
 

@@ -24,6 +24,11 @@ import { createTokenManager } from './auth.mjs';
 import { createWorkbuddyQuotaCache } from './quota.mjs';
 import { createRateLimitRegistry, parseResetTime, modelRateLimitMessage } from './ratelimit.mjs';
 import { createWorkbuddyModelCatalog } from './models.mjs';
+import { anthropicMessageFromEvents as aggregateMessageFromEvents } from '../../adapters/anthropic-message.mjs';
+import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
+
+/** 兜底 message id 用池名，导出供测试与调用方共用（实现见 adapters/anthropic-message.mjs）。 */
+export const anthropicMessageFromEvents = (events) => aggregateMessageFromEvents(events, { fallbackId: 'msg_workbuddy' });
 
 /** HTTP 层错误分类（流内业务信封经 stream.mjs businessErrorOf 同样落到这里）。 */
 export function classifyUpstreamError(status, bodyText, { now = Date.now } = {}) {
@@ -74,54 +79,6 @@ function errorFrom(cls, status) {
   return err;
 }
 
-/** Anthropic 事件序列 → 完整 message JSON（非流式出站 / sendCollect 用）。 */
-export function anthropicMessageFromEvents(events) {
-  let message = null;
-  const blocks = [];
-  let stopReason = null;
-  let usage = { input_tokens: 0, output_tokens: 0 };
-  for (const ev of events) {
-    if (ev.type === 'message_start') {
-      message = ev.message;
-    } else if (ev.type === 'content_block_start') {
-      blocks[ev.index] = { ...ev.content_block, __parts: [] };
-    } else if (ev.type === 'content_block_delta') {
-      const block = blocks[ev.index];
-      if (!block) continue;
-      if (ev.delta?.type === 'text_delta') block.__parts.push(ev.delta.text ?? '');
-      else if (ev.delta?.type === 'input_json_delta') block.__parts.push(ev.delta.partial_json ?? '');
-    } else if (ev.type === 'message_delta') {
-      stopReason = ev.delta?.stop_reason ?? stopReason;
-      usage = { ...usage, ...(ev.usage ?? {}) };
-    }
-  }
-  const base = message ?? {
-    id: 'msg_workbuddy',
-    type: 'message',
-    role: 'assistant',
-    model: 'unknown',
-    content: [],
-    stop_reason: null,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
-  const content = blocks.filter(Boolean).map((b) => {
-    const text = b.__parts.join('');
-    if (b.type === 'tool_use') {
-      let input = {};
-      try {
-        input = text ? JSON.parse(text) : {};
-      } catch {
-        input = {};
-      }
-      return { type: 'tool_use', id: b.id, name: b.name, input };
-    }
-    if (b.type === 'thinking') return { type: 'thinking', thinking: text };
-    return { type: 'text', text };
-  });
-  return { ...base, content, stop_reason: stopReason ?? base.stop_reason, usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens } };
-}
-
 export function createWorkbuddyPool({
   accounts = [],
   config = {},
@@ -163,38 +120,9 @@ export function createWorkbuddyPool({
   const tokens = createTokenManager({ fetchImpl, now, endpoint: config.endpoints?.auth || endpoint });
 
   /** 刷新出的新 auth 整组立即原子落盘（对齐 wheel _save_session 整文件替换语义）。 */
-  function persistTokenPatch(accId, patch) {
-    if (!accountsFile) return;
-    try {
-      const dir = path.dirname(accountsFile);
-      const list = loadAccounts(dir);
-      const row = list.find((a) => a.id === accId);
-      if (!row) return;
-      Object.assign(row, patch);
-      saveAccounts(dir, list);
-    } catch (err) {
-      console.error(`[wb] token patch 落盘失败（${accId}）：${err?.message}`);
-    }
-  }
+  const persistTokenPatch = tokenPatchPersister(accountsFile, 'wb');
 
-  function writeAnthropicError(res, err) {
-    res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: err.type, message: err.message } })}\n\n`);
-  }
-
-  function unavailable(cause) {
-    const info = scheduler.unavailableInfo();
-    if (!info.pool) {
-      return new HttpError(429, '没有可用账号，请检查账号状态', { type: 'rate_limit_error' });
-    }
-    if (!info.cooling && info.saturated) {
-      return new HttpError(429, '当前并发已满，请稍后重试', { type: 'rate_limit_error' });
-    }
-    const waitMs = Math.max(0, (info.soonestRecovery || scheduler.soonestRecovery()) - scheduler.now());
-    const suffix = cause ? `（最后错误：${cause}）` : '';
-    return new HttpError(429, `所有 WorkBuddy 账号暂不可用，约 ${Math.max(1, Math.ceil(waitMs / 60_000))} 分钟后恢复${suffix}`, {
-      type: 'rate_limit_error',
-    });
-  }
+  const unavailable = (cause) => unavailableError(scheduler, 'WorkBuddy', cause);
 
   async function dispatch({ req, res, body, key, signal, collect }) {
     let lastError = null;

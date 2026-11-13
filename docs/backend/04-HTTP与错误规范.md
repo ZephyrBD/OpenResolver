@@ -14,8 +14,12 @@
 | `invalid_request_error` | 请求体/参数不合法 | `HttpError` 默认、`RouteError` 默认 |
 | `authentication_error` | 密钥缺失/无效/过期 | `AuthError` 默认 |
 | `api_error` | 上游故障/网关内部错误 | `apiError` 默认 |
+| `not_found_error` | 路径/资源不存在（404） | `gateway.mjs`、`panel/api.mjs`、`panel/static.mjs` |
+| `permission_error` | 已认证但无权限（403，如池白名单/IP 白名单拒绝） | `auth/guard.mjs` |
+| `forbidden` | 面板面 CSRF/Origin 校验失败（403） | `panel/api.mjs` |
+| `rate_limit_error` | 登录限速锁定（429） | `panel/api.mjs` |
 
-新增 type 属重决策；先用上表，不够再问。
+新增 type 属重决策；先用上表，不够再问。（注：`forbidden` 未带 `_error` 后缀，为存量契约 `W4`，保持不动。）
 
 ## 2. 错误类
 

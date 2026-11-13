@@ -1,5 +1,8 @@
 import { deviceIdFor, sessionIdFor } from '../../fingerprint.mjs';
 
+import { createQuotaCacheSkeleton } from '../quota-cache.mjs';
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
+
 /**
  * ZCode 额度查询 + 缓存（文档 §6.1 缺陷 5）。
  *
@@ -112,8 +115,8 @@ function resultOf(entry, source, error) {
 }
 
 export function createQuotaCache({
-  origin = 'https://zcode.z.ai',
-  appVersion = '3.16.3',
+  origin = ZCODE_ORIGIN,
+  appVersion = ZCODE_APP_VERSION,
   fetchImpl = fetch,
   now = Date.now,
   ttlMs = DEFAULT_TTL_MS,
@@ -122,8 +125,6 @@ export function createQuotaCache({
   timeoutMs = 10_000,
 } = {}) {
   const url = `${origin}${BALANCE_PATH}`;
-  const cache = new Map();
-  const inflight = new Map();
 
   async function fetchRatio(acc) {
     const res = await fetchImpl(url, {
@@ -144,61 +145,13 @@ export function createQuotaCache({
     return { ratio, ...planFrom(json), details: detailsFrom(json) };
   }
 
-  async function attempt(acc, key) {
-    try {
-      const parsed = await fetchRatio(acc);
-      const next = { ...parsed, fetchedAt: now(), error: null, failures: 0, nextAttemptAt: 0 };
-      cache.set(key, next);
-      return resultOf(next, 'live');
-    } catch (err) {
-      const previous = cache.get(key) ?? { ratio: null, fetchedAt: 0, failures: 0 };
-      const failures = (previous.failures ?? 0) + 1;
-      const backoff = Math.min(backoffBaseMs * 2 ** (failures - 1), backoffMaxMs);
-      const next = {
-        ...previous,
-        error: err?.message || '额度查询失败',
-        failures,
-        nextAttemptAt: now() + backoff,
-      };
-      cache.set(key, next);
-      return resultOf(next, next.ratio === null ? 'unknown' : 'stale', next.error);
-    }
-  }
-
-  async function get(acc) {
-    const key = entryKey(acc);
-    const t = now();
-    const entry = cache.get(key);
-
-    if (entry && entry.ratio !== null && !entry.error && t - entry.fetchedAt < ttlMs) {
-      return resultOf(entry, 'live');
-    }
-    if (entry && entry.nextAttemptAt > t) {
-      return resultOf(entry, entry.ratio === null ? 'unknown' : 'stale', entry.error);
-    }
-
-    // 同一账号的并发查询共享一个请求，避免面板/调度同时回源把上游打爆
-    const pending = inflight.get(key);
-    if (pending) return pending;
-    const promise = attempt(acc, key).finally(() => inflight.delete(key));
-    inflight.set(key, promise);
-    return promise;
-  }
-
-  /** 同步读最近一次成功值，供调度器 quotaRatio 使用；无数据返回 null。 */
-  function peek(acc) {
-    const entry = cache.get(entryKey(acc));
-    return typeof entry?.ratio === 'number' ? entry.ratio : null;
-  }
-
-  /** 领取成功后清缓存：按账号删 entry（连同退避计数），下个 get 即回源；无参全清。 */
-  function invalidate(acc) {
-    if (acc == null) {
-      cache.clear();
-      return;
-    }
-    cache.delete(entryKey(acc));
-  }
-
-  return { get, peek, invalidate };
+  return createQuotaCacheSkeleton({
+    now,
+    ttlMs,
+    backoffBaseMs,
+    backoffMaxMs,
+    fetchOne: (acc) => fetchRatio(acc),
+    toResult: resultOf,
+  });
 }
+

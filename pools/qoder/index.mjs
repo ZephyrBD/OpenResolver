@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { createEventChannel } from '../event-channel.mjs';
-import { createSseParser } from '../../adapters/sse-reader.mjs';
+import { createSseParser, utf8TextChunks } from '../../adapters/sse-reader.mjs';
 import { buildAuthHeaders } from './cosy.mjs';
 import { qoderEncodeBody } from './encode.mjs';
 import { chatUrl, regionConfig } from './region.mjs';
@@ -13,6 +13,11 @@ import { createQoderQuotaCache } from './quota.mjs';
 import { createModelCatalog } from './models.mjs';
 import { machineIdForAccount } from './identity.mjs';
 import crypto from 'node:crypto';
+import { anthropicMessageFromEvents as aggregateMessageFromEvents } from '../../adapters/anthropic-message.mjs';
+import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
+
+/** 兜底 message id 用池名，导出供测试与调用方共用（实现见 adapters/anthropic-message.mjs）。 */
+export const anthropicMessageFromEvents = (events) => aggregateMessageFromEvents(events, { fallbackId: 'msg_qoder' });
 
 /**
  * Qoder 池（cn + global）。协议：COSY 签名 + 私有编码体 + 双层 SSE（见 pools/qoder/*）。
@@ -61,55 +66,6 @@ function errorFrom(cls, status) {
   });
 }
 
-/** Anthropic 事件序列 → 完整 message JSON（供非流式出站 / sendCollect）。 */
-export function anthropicMessageFromEvents(events) {
-  let message = null;
-  const blocks = [];
-  let stopReason = null;
-  let usage = { input_tokens: 0, output_tokens: 0 };
-  for (const ev of events) {
-    if (ev.type === 'message_start') {
-      message = ev.message;
-    } else if (ev.type === 'content_block_start') {
-      blocks[ev.index] = { ...ev.content_block, __parts: [] };
-    } else if (ev.type === 'content_block_delta') {
-      const block = blocks[ev.index];
-      if (!block) continue;
-      if (ev.delta?.type === 'text_delta') block.__parts.push(ev.delta.text ?? '');
-      else if (ev.delta?.type === 'thinking_delta') block.__parts.push(ev.delta.thinking ?? '');
-      else if (ev.delta?.type === 'input_json_delta') block.__parts.push(ev.delta.partial_json ?? '');
-    } else if (ev.type === 'message_delta') {
-      stopReason = ev.delta?.stop_reason ?? stopReason;
-      usage = { ...usage, ...(ev.usage ?? {}) };
-    }
-  }
-  const base = message ?? {
-    id: 'msg_qoder',
-    type: 'message',
-    role: 'assistant',
-    model: 'unknown',
-    content: [],
-    stop_reason: null,
-    stop_sequence: null,
-    usage: { input_tokens: 0, output_tokens: 0 },
-  };
-  const content = blocks.filter(Boolean).map((b) => {
-    const text = b.__parts.join('');
-    if (b.type === 'tool_use') {
-      let input = {};
-      try {
-        input = text ? JSON.parse(text) : {};
-      } catch {
-        input = {};
-      }
-      return { type: 'tool_use', id: b.id, name: b.name, input };
-    }
-    if (b.type === 'thinking') return { type: 'thinking', thinking: text };
-    return { type: 'text', text };
-  });
-  return { ...base, content, stop_reason: stopReason ?? base.stop_reason, usage: { input_tokens: usage.input_tokens, output_tokens: usage.output_tokens } };
-}
-
 export function createQoderPool({
   accounts = [],
   config = {},
@@ -155,20 +111,7 @@ export function createQoderPool({
     url: endpoints.modelList,
   });
 
-  function unavailable(cause) {
-    const info = scheduler.unavailableInfo();
-    if (!info.pool) {
-      return new HttpError(429, '没有可用账号，请检查账号状态', { type: 'rate_limit_error' });
-    }
-    if (!info.cooling && info.saturated) {
-      return new HttpError(429, '当前并发已满，请稍后重试', { type: 'rate_limit_error' });
-    }
-    const waitMs = Math.max(0, (info.soonestRecovery || scheduler.soonestRecovery()) - scheduler.now());
-    const suffix = cause ? `（最后错误：${cause}）` : '';
-    return new HttpError(429, `所有 Qoder 账号暂不可用，约 ${Math.max(1, Math.ceil(waitMs / 60_000))} 分钟后恢复${suffix}`, {
-      type: 'rate_limit_error',
-    });
-  }
+  const unavailable = (cause) => unavailableError(scheduler, 'Qoder', cause);
 
   function chatHeadersFor(acc, encodedBody, modelConfig, requestUrl) {
     if (!acc.userID) {
@@ -205,8 +148,7 @@ export function createQoderPool({
       return finalEvents;
     }
     const parser = createSseParser();
-    for await (const chunk of Readable.fromWeb(upstream.body, { signal })) {
-      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    for await (const text of utf8TextChunks(Readable.fromWeb(upstream.body, { signal }))) {
       // 注意：只在流末尾 drain；逐块 drain 会把跨 chunk 截断的半行当完整行发出去
       for (const { data } of parser.push(text)) {
         const { done, events } = decoder.pushData(data);
@@ -234,19 +176,9 @@ export function createQoderPool({
     }
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let acc = null;
-      if (stickyKey) {
-        if (attempt === 0) {
-          const bound = scheduler.stickyGet(stickyKey, { readyOnly: true });
-          if (bound && !tried.has(bound.id)) acc = bound;
-          else scheduler.stickyClear(stickyKey);
-        } else {
-          scheduler.stickyClear(stickyKey);
-        }
-      }
-      if (!acc) acc = scheduler.pick({ exclude: tried, allowFallback: attempt > 0 });
+      // 选号：首试走粘性、重试解绑（公共件 pickAttemptAccount）
+      const acc = pickAttemptAccount(scheduler, stickyKey, attempt, tried);
       if (!acc) throw unavailable(lastError?.message);
-      tried.add(acc.id);
 
       // token 过期 → 单飞刷新（PAT 重交换 / refresh_token）；patch（含过期时间）必须回写，
       // 否则过期后每个请求都重走一次交换
@@ -346,20 +278,7 @@ export function createQoderPool({
       scheduler.onSuccess(acc);
       if (stickyKey) scheduler.stickySet(stickyKey, acc);
 
-      if (channel) {
-        channel.end();
-        return { status: 200, contentType: 'text/event-stream', events: channel };
-      }
-      if (streaming) {
-        res.end();
-        return;
-      }
-      const messageJson = anthropicMessageFromEvents(events);
-      const bodyText = JSON.stringify(messageJson);
-      if (collect) return { status: 200, contentType: 'application/json', bodyText };
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(bodyText);
-      return;
+      return finishAnthropicResponse({ res, collect, streaming, channel, events, toMessage: anthropicMessageFromEvents });
     }
 
     if (signal?.aborted) return;
