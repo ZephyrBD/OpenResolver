@@ -10,7 +10,8 @@ import { createQoderQuotaCache } from '../pools/qoder/quota.mjs';
 import { createTraeQuotaCache } from '../pools/trae/quota.mjs';
 import { createWorkbuddyQuotaCache } from '../pools/workbuddy/quota.mjs';
 import { createCodeartsQuotaCache } from '../pools/codearts/quota.mjs';
-import { createTokenManager, LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/auth.mjs';
+import { createTokenManager } from '../pools/codearts/auth.mjs';
+import { LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/oauth.mjs';
 import { newDpopPrivateJwk } from '../pools/codearts/dpop.mjs';
 
 const json = (res, obj, status = 200) => {

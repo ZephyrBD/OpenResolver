@@ -7,7 +7,7 @@ import path from 'node:path';
 import { startStub } from './helpers/stub.mjs';
 import { tmpDataDir, startPanel, login, panelFetch } from './helpers/panel.mjs';
 import { createCodeartsPool } from '../pools/codearts/index.mjs';
-import { LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/auth.mjs';
+import { LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/oauth.mjs';
 
 // 桩上的 token 端点路径（panel LOGIN_CONFIG 用生产 STS host，所以桩要按完整 URL 分流）
 const STS_PATH = '/v1/oauth2/tokens';

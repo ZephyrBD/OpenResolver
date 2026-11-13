@@ -4,12 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startStub } from './helpers/stub.mjs';
-import {
-  pkceChallenge, createPkce, buildAuthorizeURL, createLoginFlow,
-  exchangeCode, refreshToken, pollTicket, isRefreshTokenExpired,
-  accountFromToken, expiresAtMsOf, createTokenManager, EXPIRY_BUFFER_MS,
-  LOGIN_CONFIG_DEFAULTS,
-} from '../pools/codearts/auth.mjs';
+import { pkceChallenge, createPkce, buildAuthorizeURL, createLoginFlow, exchangeCode, refreshToken, pollTicket, LOGIN_CONFIG_DEFAULTS } from '../pools/codearts/oauth.mjs';
+import { isRefreshTokenExpired } from '../pools/codearts/oauth.mjs';
+import { accountFromToken, expiresAtMsOf, createTokenManager, EXPIRY_BUFFER_MS } from '../pools/codearts/auth.mjs';
 import { newDpopPrivateJwk } from '../pools/codearts/dpop.mjs';
 import { verifyDpopProof } from '../pools/codearts/dpop.mjs';
 import { EP_OAUTH_TOKENS } from '../pools/codearts/constants.mjs';

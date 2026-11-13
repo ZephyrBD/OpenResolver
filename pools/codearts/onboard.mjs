@@ -1,13 +1,8 @@
 // CodeArts onboard：授权链接/回调粘贴/ticket 轮询 → 落账号。面板 /api/onboard/codearts
 // 与 tools 共用。auth 逻辑在 auth.mjs（client.go 移植），这里只做账号落盘与重导出。
 
-import {
-  createLoginFlow,
-  exchangeCode,
-  pollTicket,
-  accountFromToken,
-  LOGIN_CONFIG_DEFAULTS,
-} from './auth.mjs';
+import { createLoginFlow, exchangeCode, pollTicket, LOGIN_CONFIG_DEFAULTS } from './oauth.mjs';
+import { accountFromToken } from './auth.mjs';
 import { loadAccounts, saveAccounts } from '../zcode/accounts.mjs';
 
 export { createLoginFlow, exchangeCode, pollTicket, accountFromToken, LOGIN_CONFIG_DEFAULTS };
