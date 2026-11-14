@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startStub } from './helpers/stub.mjs';
 import { seedDb } from './helpers/gateway.mjs';
-import { createGateway } from '../gateway.mjs';
+import { createGateway } from '../core/gateway.mjs';
 import { createUsageRecorder, usageDate } from '../panel/usage.mjs';
 import { tmpDataDir, startPanel, login, panelFetch } from './helpers/panel.mjs';
 

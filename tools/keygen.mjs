@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { loadConfig } from '../config.mjs';
+import { loadConfig } from '../core/config.mjs';
 import { loadKeys, saveKeys } from '../auth/store.mjs';
 import { createKey } from '../auth/keys.mjs';
 

@@ -2,9 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { userIdFromJwt } from '../fingerprint.mjs';
+import { userIdFromJwt } from '../core/fingerprint.mjs';
 import { loadAccounts, saveAccounts } from '../pools/zcode/accounts.mjs';
-import { loadConfig } from '../config.mjs';
+import { loadConfig } from '../core/config.mjs';
 
 function parseArgs(argv) {
   const out = {};

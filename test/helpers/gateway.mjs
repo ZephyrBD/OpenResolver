@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGateway } from '../../gateway.mjs';
+import { createGateway } from '../../core/gateway.mjs';
 import { createKey } from '../../auth/keys.mjs';
 
 export const zcodePool = {

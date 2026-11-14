@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { seedDb } from './helpers/gateway.mjs';
-import { createGateway } from '../gateway.mjs';
+import { createGateway } from '../core/gateway.mjs';
 import { tmpDataDir, startPanel, login, panelFetch } from './helpers/panel.mjs';
 
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:";

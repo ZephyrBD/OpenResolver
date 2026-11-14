@@ -4,7 +4,7 @@
  */
 
 import { HttpError } from '../http/errors.mjs';
-import { deviceIdFor, sessionIdFor } from '../fingerprint.mjs';
+import { deviceIdFor, sessionIdFor } from '../core/fingerprint.mjs';
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:",

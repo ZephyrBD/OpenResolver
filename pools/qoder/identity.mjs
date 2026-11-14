@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { deriveId } from '../../fingerprint.mjs';
+import { deriveId } from '../../core/fingerprint.mjs';
 
 /** md5("qoder-machine:" + seed) → UUIDv4 形状字符串。 */
 export function machineIdFor(seed) {

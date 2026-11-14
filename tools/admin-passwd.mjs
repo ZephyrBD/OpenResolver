@@ -6,7 +6,7 @@
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { parseImportArgs } from './import-args.mjs';
-import { loadConfig } from '../config.mjs';
+import { loadConfig } from '../core/config.mjs';
 import { saveAdmin } from '../panel/admin.mjs';
 
 const args = parseImportArgs(process.argv.slice(2));

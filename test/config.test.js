@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig } from '../config.mjs';
+import { loadConfig } from '../core/config.mjs';
 
 test('loadConfig applies the documented defaults', () => {
   const cfg = loadConfig({});

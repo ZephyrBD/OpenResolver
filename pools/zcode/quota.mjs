@@ -1,4 +1,4 @@
-import { deviceIdFor, sessionIdFor } from '../../fingerprint.mjs';
+import { deviceIdFor, sessionIdFor } from '../../core/fingerprint.mjs';
 
 import { createQuotaCacheSkeleton } from '../quota-cache.mjs';
 import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';

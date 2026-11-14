@@ -23,7 +23,7 @@ WORKDIR /app
 
 # 只拷代码，data/ 由 .dockerignore 排除，永不进镜像
 COPY package.json ./
-COPY *.mjs ./
+COPY core/*.mjs ./core/
 COPY adapters ./adapters
 COPY auth ./auth
 COPY http ./http

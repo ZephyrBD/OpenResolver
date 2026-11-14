@@ -6,7 +6,7 @@ import { sendJson } from '../http/respond.mjs';
 import { readJson, DEFAULT_MAX_BODY_BYTES } from '../http/body.mjs';
 import { SETTING_KEYS } from '../pools/settings.mjs';
 import { loadAccounts, saveAccounts } from '../pools/zcode/accounts.mjs';
-import { deviceIdFor, sessionIdFor } from '../fingerprint.mjs';
+import { deviceIdFor, sessionIdFor } from '../core/fingerprint.mjs';
 
 // CodeArts 登录端点默认值来自 LOGIN_CONFIG_DEFAULTS（生产华为云）；
 // 测试可经 createPanelGateway({ caLoginConfig }) 注入桩 host。

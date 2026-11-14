@@ -4,7 +4,7 @@
 // 用法：node tools/import-qoder.mjs --pat pt-... [--region cn] [--data <dir>]
 import path from 'node:path';
 import { parseImportArgs } from './import-args.mjs';
-import { loadConfig } from '../config.mjs';
+import { loadConfig } from '../core/config.mjs';
 import { loadIdentitySeed } from '../pools/qoder/identity.mjs';
 import { accountFromPat, persistAccount } from '../pools/qoder/onboard.mjs';
 

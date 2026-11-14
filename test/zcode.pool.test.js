@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { startGateway } from './helpers/gateway.mjs';
 import { startStub } from './helpers/stub.mjs';
 import { createZcodePool } from '../pools/zcode/index.mjs';
-import { deviceIdFor } from '../fingerprint.mjs';
+import { deviceIdFor } from '../core/fingerprint.mjs';
 
 const PROFILE = {
   system: [{ type: 'text', text: 'OFFICIAL SYSTEM' }],

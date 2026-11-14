@@ -22,7 +22,7 @@ async function waitFor(fn, timeoutMs = 3000) {
   }
   return true;
 }
-import { boot } from '../boot.mjs';
+import { boot } from '../core/boot.mjs';
 import { signRequest } from '../pools/codearts/signer.mjs';
 import { EP_CHAT_V2 } from '../pools/codearts/constants.mjs';
 

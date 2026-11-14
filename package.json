@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node server.mjs",
+    "start": "node core/server.mjs",
     "test": "node --test test/*.test.js"
   },
   "license": "Apache-2.0"

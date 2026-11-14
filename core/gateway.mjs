@@ -1,19 +1,19 @@
 import http from 'node:http';
 import path from 'node:path';
-import { sendJson, apiError } from './http/respond.mjs';
-import { readJson, DEFAULT_MAX_BODY_BYTES } from './http/body.mjs';
-import { HttpError } from './http/errors.mjs';
+import { sendJson, apiError } from '../http/respond.mjs';
+import { readJson, DEFAULT_MAX_BODY_BYTES } from '../http/body.mjs';
+import { HttpError } from '../http/errors.mjs';
 import { RouteError, routeModel } from './routing.mjs';
-import { AuthError, authorize, extractSecret } from './auth/guard.mjs';
+import { AuthError, authorize, extractSecret } from '../auth/guard.mjs';
 import { estimateTokens } from './tokens.mjs';
 import {
   chatCompletionsToMessages,
   anthropicToChatCompletion,
   aggregateAnthropicSseToChatCompletion,
   anthropicEventsToOpenaiChunks,
-} from './adapters/openai-to-anthropic.mjs';
-import { createSseParser } from './adapters/sse-reader.mjs';
-import { createUsageRecorder } from './panel/usage.mjs';
+} from '../adapters/openai-to-anthropic.mjs';
+import { createSseParser } from '../adapters/sse-reader.mjs';
+import { createUsageRecorder } from '../panel/usage.mjs';
 
 const EMPTY_DB = { version: 1, keys: [] };
 

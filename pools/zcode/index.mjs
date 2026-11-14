@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
-import { deviceIdFor, sessionIdFor } from '../../fingerprint.mjs';
+import { deviceIdFor, sessionIdFor } from '../../core/fingerprint.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { DEFAULT_SETTINGS } from '../settings.mjs';
 import { sseBodyChannel } from '../event-channel.mjs';

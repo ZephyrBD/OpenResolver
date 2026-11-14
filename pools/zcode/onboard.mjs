@@ -2,7 +2,7 @@
 // 落盘账号形状对齐 data/pools/zcode/accounts.json 既有字段（id/label/email/realm/jwt/zaiAccessToken/uid/...）。
 
 import crypto from 'node:crypto';
-import { userIdFromJwt } from '../../fingerprint.mjs';
+import { userIdFromJwt } from '../../core/fingerprint.mjs';
 import { loadAccounts, saveAccounts } from './accounts.mjs';
 import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
 

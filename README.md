@@ -78,7 +78,7 @@ node tools/admin-passwd.mjs
 
 # 启动（默认 0.0.0.0:8790）
 npm start
-# 或 PORT=8790 node server.mjs
+# 或 PORT=8790 node core/server.mjs
 ```
 
 **方式 B：Docker Compose（推荐）**
@@ -251,7 +251,7 @@ tar -czf openresolver-data.tar.gz data/      # 备份
 
 ```bash
 npm test                     # node --test test/*.test.js
-PORT=8790 node server.mjs    # 本地运行
+PORT=8790 node core/server.mjs    # 本地运行
 ```
 
 ```text

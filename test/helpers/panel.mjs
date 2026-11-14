@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
-import { createGateway } from '../../gateway.mjs';
+import { createGateway } from '../../core/gateway.mjs';
 import { createPanelGateway } from '../../panel/api.mjs';
 import { createUsageRecorder } from '../../panel/usage.mjs';
 import { createPoolScheduler } from '../../pools/base.mjs';

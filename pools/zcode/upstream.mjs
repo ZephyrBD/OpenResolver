@@ -1,4 +1,4 @@
-import { metadataUserId } from '../../fingerprint.mjs';
+import { metadataUserId } from '../../core/fingerprint.mjs';
 
 const SYSTEM_BANNER = (text) => `<pi_system_instructions>\n${text}\n</pi_system_instructions>`;
 

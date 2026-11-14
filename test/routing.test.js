@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { routeModel, RouteError } from '../routing.mjs';
+import { routeModel, RouteError } from '../core/routing.mjs';
 
 const POOLS = ['zcode', 'qoder-cn', 'qoder', 'trae', 'wb-cn', 'wb-global'];
 

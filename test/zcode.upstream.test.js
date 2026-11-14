@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildUpstreamBody } from '../pools/zcode/upstream.mjs';
-import { deviceIdFor, sessionIdFor } from '../fingerprint.mjs';
+import { deviceIdFor, sessionIdFor } from '../core/fingerprint.mjs';
 
 const PROFILE = {
   system: [{ type: 'text', text: 'OFFICIAL SYSTEM 1' }, { type: 'text', text: 'OFFICIAL SYSTEM 2' }],

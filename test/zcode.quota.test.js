@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startStub } from './helpers/stub.mjs';
 import { createQuotaCache } from '../pools/zcode/quota.mjs';
-import { sessionIdFor } from '../fingerprint.mjs';
+import { sessionIdFor } from '../core/fingerprint.mjs';
 
 const ACC = { id: 'z1', uid: 'uid-1', deviceId: 'device-abc', jwt: 'jwt-1' };
 
