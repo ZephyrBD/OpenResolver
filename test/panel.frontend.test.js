@@ -105,6 +105,11 @@ test('panel.frontend: 冒烟——面板页面用到的 API 全部存在且 200�
   assert.equal(keys.status, 200);
   assert.ok(Array.isArray((await keys.json()).keys));
 
+  // 密钥页用量聚合（今日/14 天统计列）
+  const keyUsage = await panelFetch(base, '/api/keys/usage?days=14', { cookies });
+  assert.equal(keyUsage.status, 200);
+  assert.ok('stats' in (await keyUsage.json()));
+
   const created = await panelFetch(base, '/api/keys', {
     method: 'POST',
     cookies,

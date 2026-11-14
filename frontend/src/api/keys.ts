@@ -8,6 +8,7 @@ export interface KeyRecord {
   expiresAt?: number
   createdAt?: number
   usedTokens?: number
+  tokenQuota?: number
 }
 
 export interface CreatedKey {
@@ -30,4 +31,18 @@ export async function rotateKey(id: string): Promise<{ secret: string }> {
 
 export async function deleteKey(id: string): Promise<void> {
   await request.delete(`/api/keys/${encodeURIComponent(id)}`)
+}
+
+export interface KeyUsageStat {
+  requests: number
+  errors: number
+  inputTokens: number
+  outputTokens: number
+  lastUsedAt: number
+}
+
+/** 密钥级用量聚合（缺省 14 天），keyId → 统计。无用量记录的 key 不在表内。 */
+export async function fetchKeyUsage(days = 14): Promise<Record<string, KeyUsageStat>> {
+  const res = await getJson<{ days: number; stats: Record<string, KeyUsageStat> }>(`/api/keys/usage`, { days })
+  return res.stats
 }

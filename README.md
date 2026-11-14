@@ -21,7 +21,7 @@ OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的
 | 智能调度   | 加权选号、Top-N 候选、粘性会话、额度比例入权重、失败换号、冷却与熔断                                       |
 | 密钥体系   | `zsk_` 前缀、只存 SHA-256、有效期 / 池白名单 / 模型白名单 / IP 白名单 / token 配额                 |
 | 额度与签到  | 每账号额度明细、自动签到/领取、每日定时补领、ZCode 周末包抢领                                          |
-| 管理面板   | 仪表盘、账号、密钥、设置四页；Vue 3 + Element Plus 构建（`frontend/`，产物进 Docker 镜像），支持浏览器内完成账号接入                                       |
+| 管理面板   | 仪表盘、账号（凭证检测/刷新模型）、密钥（14 天用量与限额进度）、设置四页；Vue 3 + Element Plus 构建（`frontend/`，产物进 Docker 镜像），支持浏览器内完成账号接入                                       |
 | 安全     | 请求体上限、上游总超时、客户端断开即 abort、忽略伪造 XFF、面板 CSRF + 登录限速                            |
 | 零依赖    | 仅 Node.js ≥ 22 内置模块，无 npm 运行时依赖                                             |
 | 容器化    | 官方 `Dockerfile`（`node:22-alpine`）+ `docker compose up -d` 一键部署，`data/` 独立挂载 |

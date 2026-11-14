@@ -87,3 +87,26 @@ export async function claimPool(pool: string): Promise<ClaimResult[]> {
   const res = await postJson<{ results: ClaimResult[] }>(`/api/pools/${encodeURIComponent(pool)}/claim`, {})
   return res.results ?? []
 }
+
+export interface AccountCheckResult {
+  ok: boolean
+  source: 'live' | 'stale' | 'unknown'
+  ratio: number | null
+  error: string | null
+}
+
+/** 凭证检测：强制回源该账号额度（不消耗对话额度）。live=凭证有效。 */
+export async function checkAccount(pool: string, id: string): Promise<AccountCheckResult> {
+  return postJson(`/api/pools/${encodeURIComponent(pool)}/accounts/${encodeURIComponent(id)}/check`)
+}
+
+export interface ModelRefreshResult {
+  refreshed: boolean
+  degraded: number
+  total: number
+}
+
+/** 模型目录手动刷新（静态表池返回 400，由调用方提示）。 */
+export async function refreshPoolModels(pool: string): Promise<ModelRefreshResult> {
+  return postJson(`/api/pools/${encodeURIComponent(pool)}/models/refresh`)
+}

@@ -2,9 +2,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   POOL_NAMES,
+  checkAccount,
   deleteAccount,
   fetchAccounts,
   patchAccount,
+  refreshPoolModels,
   resetAccount,
   type OnboardAccount,
   type PoolAccount,
@@ -12,6 +14,7 @@ import {
 } from '@/api/accounts'
 import { accountName, displayWithId } from '@/utils/fmt'
 import { confirm } from '@/composables/useConfirm'
+import { toast } from '@/composables/useToast'
 import AppDialog from '@/components/common/AppDialog.vue'
 import AppSelect from '@/components/common/AppSelect.vue'
 import QuotaDetails from '@/components/accounts/QuotaDetails.vue'
@@ -116,6 +119,42 @@ async function clearCooldown(acc: PoolAccount): Promise<void> {
   }
 }
 
+const checking = ref<Record<string, boolean>>({})
+
+async function checkCredentials(acc: PoolAccount): Promise<void> {
+  errText.value = ''
+  checking.value[acc.id] = true
+  try {
+    const r = await checkAccount(pool.value, acc.id)
+    if (r.ok) {
+      toast(`账号 ${displayWithId(accountName(acc), acc.id)} 凭证有效（额度 ${(r.ratio! * 100).toFixed(0)}%）`, 'success')
+    } else if (r.source === 'stale') {
+      toast(`账号 ${displayWithId(accountName(acc), acc.id)} 回源失败，显示旧额度；${r.error ?? ''}`, 'error')
+    } else {
+      toast(`账号 ${displayWithId(accountName(acc), acc.id)} 凭证异常：${r.error ?? '原因未知'}`, 'error')
+    }
+  } catch (err) {
+    errText.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    checking.value[acc.id] = false
+  }
+}
+
+const refreshingModels = ref(false)
+
+async function refreshModels(): Promise<void> {
+  errText.value = ''
+  refreshingModels.value = true
+  try {
+    const r = await refreshPoolModels(pool.value)
+    toast(`模型目录已刷新：${r.total} 个模型（${r.degraded} 个降级）`, 'success')
+  } catch (err) {
+    toast(err instanceof Error ? err.message : String(err), 'error')
+  } finally {
+    refreshingModels.value = false
+  }
+}
+
 async function removeAccount(acc: PoolAccount): Promise<void> {
   const ok = await confirm(`确定删除账号 ${displayWithId(accountName(acc), acc.id)}？此操作不可恢复。`, { danger: true })
   if (!ok) return
@@ -148,6 +187,7 @@ const showManualImport = computed(() => pool.value === 'zcode')
       <el-button v-if="showOnboard" type="primary" @click="onboardDlg?.open()">登录接入</el-button>
       <el-button v-if="showManualImport" @click="manualDlg?.open()">手动导入</el-button>
       <el-button @click="claimDlg?.open()">领取 / 签到</el-button>
+      <el-button :loading="refreshingModels" @click="refreshModels()">刷新模型</el-button>
     </div>
 
     <p v-if="errText" class="error">{{ errText }}</p>
@@ -195,6 +235,7 @@ const showManualImport = computed(() => pool.value === 'zcode')
           </td>
           <td class="actions_col">
             <el-button size="small" @click="saveAccount(acc)">保存</el-button>
+            <el-button size="small" :loading="checking[acc.id]" @click="checkCredentials(acc)">检测</el-button>
             <el-button size="small" @click="clearCooldown(acc)">清冷却</el-button>
             <el-button size="small" type="danger" plain @click="removeAccount(acc)">删除</el-button>
           </td>

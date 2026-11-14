@@ -102,11 +102,36 @@ export function createUsageRecorder({ dataDir, maxFileBytes = MAX_USAGE_FILE_BYT
     return out;
   }
 
+  /** 最近 days 天按密钥聚合：keyId → {requests, errors, inputTokens, outputTokens, lastUsedAt}。 */
+  function byKey(days = 14) {
+    const out = {};
+    for (let i = days - 1; i >= 0; i--) {
+      const ts = now() - i * 24 * 3_600_000;
+      for (const row of readDay(usageFileFor(dataDir, usageDate(ts)))) {
+        const id = row.keyId || 'unknown';
+        const agg = (out[id] ??= {
+          requests: 0,
+          errors: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          lastUsedAt: 0,
+        });
+        agg.requests += 1;
+        agg.errors += row.status && row.status >= 400 ? 1 : 0;
+        agg.inputTokens += row.inputTokens || 0;
+        agg.outputTokens += row.outputTokens || 0;
+        if (row.ts > agg.lastUsedAt) agg.lastUsedAt = row.ts;
+      }
+    }
+    return out;
+  }
+
   return {
     active: true,
     record,
     today,
     series,
+    byKey,
     get degraded() {
       return degradedFlag || fileSize(usageFileFor(dataDir, usageDate(now()))) > maxFileBytes;
     },

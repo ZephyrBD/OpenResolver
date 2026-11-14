@@ -176,6 +176,20 @@ export function createPanelGateway({
       return sendJson(res, 200, { account: accountView(pool.accounts.find((a) => a.id === id)) });
     }
 
+    if (action === 'check' && req.method === 'POST') {
+      // 凭证检测：强制回源该账号额度（不消耗对话额度）。live=凭证有效；
+      // unknown=回源失败（error 带原因，常见 JWT/STS 过期）；stale=回源失败但有旧值。
+      if (!pool.quota?.get) throw new HttpError(501, `池 ${pool.name} 没有额度模块`, { type: 'api_error' });
+      pool.quota.invalidate?.(acc);
+      const q = await pool.quota.get(acc);
+      return sendJson(res, 200, {
+        ok: q.source === 'live',
+        source: q.source,
+        ratio: q.ratio ?? null,
+        error: q.error ?? null,
+      });
+    }
+
     if (req.method === 'PATCH' && !action) {
       const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
       const unknown = Object.keys(body).filter((k) => !ACCOUNT_PATCH_FIELDS.includes(k));
@@ -223,6 +237,13 @@ export function createPanelGateway({
 
   async function handleKeys(req, res, url) {
     if (!db) throw new HttpError(503, '密钥库未加载', { type: 'api_error' });
+
+    if (url.pathname === '/api/keys/usage' && req.method === 'GET') {
+      // 密钥级用量聚合（密钥页进度条与统计列）：缺省 14 天，封顶 90
+      const days = Math.min(90, Math.max(1, Number(new URL(req.url, 'http://localhost').searchParams.get('days')) || 14));
+      const stats = usage?.active ? usage.byKey(days) : {};
+      return sendJson(res, 200, { days, stats });
+    }
 
     if (url.pathname === '/api/keys') {
       if (req.method === 'GET') {
@@ -353,6 +374,18 @@ export function createPanelGateway({
       return sendJson(res, 200, { settings: sched(pool).settings });
     }
 
+    m = url.pathname.match(/^\/api\/pools\/([^/]+)\/models\/refresh$/);
+    if (m && req.method === 'POST') {
+      // 模型目录手动刷新：zcode 等静态表池没有 refreshModels，明确告知而非 500
+      const pool = poolByName(pools, safeDecode(m[1]));
+      if (typeof pool.refreshModels !== 'function') {
+        throw new HttpError(400, `池 ${pool.name} 的模型表是静态配置，无需刷新`, { type: 'invalid_request_error' });
+      }
+      const refreshed = await pool.refreshModels();
+      const models = (pool.models?.() || []);
+      return sendJson(res, 200, { refreshed: refreshed !== false, degraded: models.filter((x) => x.degraded).length, total: models.length });
+    }
+
     m = url.pathname.match(/^\/api\/pools\/([^/]+)\/accounts$/);
     if (m) return handleAccounts(req, res, poolByName(pools, safeDecode(m[1])));
 
@@ -361,6 +394,9 @@ export function createPanelGateway({
 
     m = url.pathname.match(/^\/api\/pools\/([^/]+)\/accounts\/([^/]+)\/reset$/);
     if (m) return handleAccountById(req, res, poolByName(pools, safeDecode(m[1])), safeDecode(m[2]), 'reset');
+
+    m = url.pathname.match(/^\/api\/pools\/([^/]+)\/accounts\/([^/]+)\/check$/);
+    if (m) return handleAccountById(req, res, poolByName(pools, safeDecode(m[1])), safeDecode(m[2]), 'check');
 
     // 每账号额度明细：现场回源（缓存 TTL 在各池 quota 模块内），单账号失败不拖垮整批。
     // 签到列以 claimer.status（领取真实链路）覆盖 quota 自带的签到查询，见 claimerCheckin。

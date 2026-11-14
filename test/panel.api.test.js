@@ -423,3 +423,91 @@ test('panel.api: /api/models 面板侧模型清单（session 鉴权、全池、/
   const anon = await panelFetch(base, '/api/models');
   assert.equal(anon.status, 401);
 });
+
+test('panel.api: /api/keys/usage 按密钥聚合（days 封顶与缺 keyId 归 unknown）', async (t) => {
+  const dataDir = tmpDataDir(t);
+  const { base, usage, db } = await startPanel(t, { dataDir, withKey: true });
+  const { cookies } = await login(base);
+  const keyId = db.keys[0].id;
+
+  usage.record({ keyId, pool: 'zcode', model: 'GLM-5.3', status: 200, inputTokens: 100, outputTokens: 50, ts: Date.now() });
+  usage.record({ keyId, pool: 'zcode', model: 'GLM-5.3', status: 500, inputTokens: 0, outputTokens: 0, ts: Date.now() });
+  usage.record({ keyId: null, pool: 'zcode', model: 'x', status: 200, inputTokens: 1, outputTokens: 0, ts: Date.now() });
+
+  // record 是异步追加（尽力而为语义）：轮询等落盘
+  let body = null;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+    const res = await panelFetch(base, '/api/keys/usage?days=14', { cookies });
+    assert.equal(res.status, 200);
+    body = await res.json();
+    if (body.stats[keyId]?.requests === 2) break;
+  }
+  assert.equal(body.days, 14);
+  assert.equal(body.stats[keyId].requests, 2);
+  assert.equal(body.stats[keyId].errors, 1);
+  assert.equal(body.stats[keyId].inputTokens, 100);
+  assert.equal(body.stats.unknown.requests, 1);
+
+  const capped = await panelFetch(base, '/api/keys/usage?days=9999', { cookies });
+  assert.equal((await capped.json()).days, 90, 'days 封顶 90');
+});
+
+test('panel.api: /check 凭证检测——quota 回源成功 live、失败 unknown', async (t) => {
+  const dataDir = tmpDataDir(t);
+  let live = true;
+  const pool = {
+    ...makePool('zcode', { dataDir, accounts: [{ id: 'a1', jwt: JWT }] }),
+    quota: {
+      async get() {
+        return live ? { source: 'live', ratio: 0.75, error: null } : { source: 'unknown', ratio: null, error: 'JWT 过期' };
+      },
+      invalidate() {},
+    },
+  };
+  const { base } = await startPanel(t, { dataDir, pools: [pool] });
+  const { cookies } = await login(base);
+
+  const ok = await panelFetch(base, '/api/pools/zcode/accounts/a1/check', { method: 'POST', cookies });
+  assert.equal(ok.status, 200);
+  let body = await ok.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.source, 'live');
+  assert.equal(body.ratio, 0.75);
+
+  live = false;
+  const bad = await panelFetch(base, '/api/pools/zcode/accounts/a1/check', { method: 'POST', cookies });
+  body = await bad.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.source, 'unknown');
+  assert.match(body.error, /JWT/);
+
+  // 无额度模块的池 → 501
+  const bare = makePool('trae', { dataDir: tmpDataDir(t), accounts: [{ id: 't1' }] });
+  const { base: base2 } = await startPanel(t, { dataDir: tmpDataDir(t), pools: [bare] });
+  const { cookies: cookies2 } = await login(base2);
+  assert.equal((await panelFetch(base2, '/api/pools/trae/accounts/t1/check', { method: 'POST', cookies: cookies2 })).status, 501);
+});
+
+test('panel.api: /models/refresh——静态表池 400 明确提示，有 refreshModels 的池返回计数', async (t) => {
+  const dataDir = tmpDataDir(t);
+  const pool = {
+    ...makePool('zcode', { dataDir }),
+    refreshModels: async () => true,
+    models: () => [{ id: 'GLM-5.3', degraded: false }, { id: 'GLM-5.3-Flash', degraded: true }],
+  };
+  const staticPool = makePool('trae', { dataDir });
+  const { base } = await startPanel(t, { dataDir, pools: [pool, staticPool] });
+  const { cookies } = await login(base);
+
+  const ok = await panelFetch(base, '/api/pools/zcode/models/refresh', { method: 'POST', cookies });
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.refreshed, true);
+  assert.equal(body.total, 2);
+  assert.equal(body.degraded, 1);
+
+  const stat = await panelFetch(base, '/api/pools/trae/models/refresh', { method: 'POST', cookies });
+  assert.equal(stat.status, 400);
+  assert.match((await stat.json()).error.message, /静态配置/);
+});

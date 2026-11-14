@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { deleteKey, fetchKeys, rotateKey, type KeyRecord } from '@/api/keys'
+import { deleteKey, fetchKeys, fetchKeyUsage, rotateKey, type KeyRecord, type KeyUsageStat } from '@/api/keys'
 import { copyText, displayWithId, fmtTime, fmtTokens } from '@/utils/fmt'
 import { confirm } from '@/composables/useConfirm'
 import AppDialog from '@/components/common/AppDialog.vue'
 import CreateKeyPanel from '@/components/keys/CreateKeyPanel.vue'
 import ApiAccessCard from '@/components/keys/ApiAccessCard.vue'
+import HandProgress from '@/components/data/HandProgress.vue'
 
 const keys = ref<KeyRecord[]>([])
+const usage = ref<Record<string, KeyUsageStat>>({})
 const loading = ref(true)
 const errText = ref('')
 
@@ -20,7 +22,9 @@ async function reload(): Promise<void> {
   loading.value = true
   errText.value = ''
   try {
-    keys.value = await fetchKeys()
+    const [list, stats] = await Promise.all([fetchKeys(), fetchKeyUsage(14)])
+    keys.value = list
+    usage.value = stats
   } catch (err) {
     errText.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -72,6 +76,13 @@ async function remove(key: KeyRecord): Promise<void> {
 }
 
 const displayName = (key: KeyRecord): string => displayWithId(key.name || key.prefix || '未命名', key.id)
+const usageOf = (key: KeyRecord): KeyUsageStat => usage.value[key.id] || { requests: 0, errors: 0, inputTokens: 0, outputTokens: 0, lastUsedAt: 0 }
+const usage14Text = (key: KeyRecord): string => {
+  const u = usageOf(key)
+  return u.requests ? `${u.requests} 次 · ${fmtTokens(u.inputTokens + u.outputTokens)}` : '—'
+}
+const quotaPct = (key: KeyRecord): number | null =>
+  key.tokenQuota && key.tokenQuota > 0 ? Math.min(100, Math.round(((key.usedTokens || 0) / key.tokenQuota) * 100)) : null
 const poolsOf = (key: KeyRecord): string => (key.enabledPools || []).join(', ') || '全部'
 
 defineOptions({ name: 'KeysView' })
@@ -95,6 +106,7 @@ defineOptions({ name: 'KeysView' })
           <th width="140">过期时间</th>
           <th width="150">创建时间</th>
           <th width="110" class="right">已用 tokens</th>
+          <th width="150" class="right">14 天用量</th>
           <th class="actions_col">操作</th>
         </tr>
       </thead>
@@ -107,7 +119,16 @@ defineOptions({ name: 'KeysView' })
           <td class="muted">{{ poolsOf(key) }}</td>
           <td class="mono">{{ key.expiresAt ? fmtTime(key.expiresAt) : '永不过期' }}</td>
           <td class="mono">{{ fmtTime(key.createdAt) }}</td>
-          <td class="mono right">{{ fmtTokens(key.usedTokens || 0) }}</td>
+          <td class="right">
+            <div class="mono">{{ fmtTokens(key.usedTokens || 0) }}</div>
+            <HandProgress
+              v-if="quotaPct(key) !== null"
+              :percentage="quotaPct(key) as number"
+              :color="quotaPct(key)! > 90 ? 'var(--err)' : 'var(--brand-blue)'"
+              :width="96"
+            />
+          </td>
+          <td class="mono right">{{ usage14Text(key) }}</td>
           <td class="actions_col">
             <el-button size="small" @click="rotate(key)">轮换</el-button>
             <el-button size="small" type="danger" plain @click="remove(key)">删除</el-button>
