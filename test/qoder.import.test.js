@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // F1（终审）：import-qoder.mjs 冒烟——进程可正常启动到网络层，不因缺 import 崩溃。
 // exit code 非 0 可以（假 PAT / 无网络），但错误信息不能是 ReferenceError（path is not defined）。
-test('import-qoder.mjs 冒烟：带假 PAT 走到网络层失败，不抛 ReferenceError', () => {
+test('import-qoder.mjs 冒烟：带假 PAT 走到网络层失败，不抛 ReferenceError', (t) => {
   const tool = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'import-qoder.mjs');
-  const result = spawnSync(process.execPath, [tool, '--pat', 'pt-smoke-fake', '--data', path.join('unused-smoke-data')], {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ugw-import-qoder-'));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [tool, '--pat', 'pt-smoke-fake', '--data', dataDir], {
     timeout: 30_000,
     encoding: 'utf8',
   });
