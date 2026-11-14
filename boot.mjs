@@ -27,7 +27,7 @@ import { loadAccounts as loadTraeAccounts } from './pools/zcode/accounts.mjs';
 import { createPanelGateway } from './panel/api.mjs';
 import { createUsageRecorder } from './panel/usage.mjs';
 
-const PROFILE_URL = new URL('./profile/zcode-profile.json', import.meta.url);
+const PROFILE_URL = new URL('./pools/zcode/profile.json', import.meta.url);
 
 function loadProfile() {
   return JSON.parse(fs.readFileSync(PROFILE_URL, 'utf8'));
