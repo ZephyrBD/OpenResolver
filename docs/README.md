@@ -14,7 +14,7 @@ docs/
 │   └── acceptance-checklist.md  # 模板：验收清单
 ├── frontend/                    # 规范层（前端）：写前端代码时的依据
 │   ├── 00-参考与优先级.md … 09-组件清单.md
-│   └── Design-md.md             # 视觉唯一依据（Figma — Playful Color）
+│   └── （Design-md.md 已并入 frontend/Design-md.md，视觉唯一依据））
 └── backend/                     # 规范层（后端）：写 Node 网关代码时的依据
     └── 00-参考与优先级.md … 09-模块清单.md
 ```

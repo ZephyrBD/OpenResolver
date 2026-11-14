@@ -1,6 +1,6 @@
 # Design-md.md · OpenResolver 管理面板视觉唯一依据
 
-> 状态：**待用户定稿**。定稿后本文件是 `docs/frontend/07-视觉规范.md` 指向的唯一设计依据；docs/frontend/Design-md.md（EduMate 泛化稿）保留至重构完成后清理。
+> 状态：**已定稿并实施**（Batch 1–5 全部落地）。`docs/frontend/Design-md.md`（EduMate 泛化稿）已清理；本文件是 `docs/frontend/07-视觉规范.md` 指向的唯一设计依据。
 > 基因：延续 Playful Color 五色棱镜（`--brand-*` 五色一等公民），重做排版密度、卡片层级、导航形态；主色模型改为 docs/07 的「端级统一强调色」（本面板单管理端 → 单一主色，不再按页轮换）。
 
 ---
