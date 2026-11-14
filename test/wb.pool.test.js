@@ -29,6 +29,13 @@ const ACCOUNT = (id = 'wb-1', uid = '1', jwt = 'at-1') => ({
   enabled: true,
 });
 
+/** 每测试独立临时目录（写 identity seed 等落盘，绝不污染仓库根）。 */
+function tmpDir(t, prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
 function makePool(stub, overrides = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ugw-wb-pool-'));
   return createWorkbuddyPool({
@@ -313,10 +320,12 @@ test('三 realm 联合：不同 realm 返回不同模型集 → 按 realm 顺序
     }
     res.end('{}');
   });
+  const dir = tmpDir(t, 'ugw-wb-models-');
   const pool = createWorkbuddyPool({
     accounts: [{ ...ACCOUNT('wb-1'), enterpriseId: '' }],
     region: 'cn',
     config: {
+      dataDir: dir,
       endpoint: stub.origin,
       endpoints: { chat: `${stub.origin}${CHAT_PATH}`, auth: stub.origin, biz: stub.origin, models: stub.origin },
       realmBases: [`${stub.origin}/r1`, `${stub.origin}/r2`, `${stub.origin}/r3`],
@@ -353,10 +362,12 @@ test('maxOutput 两代别名：OutputTokenLimit <=256 同样过滤；OutputToken
     }
     res.end('{}');
   });
+  const dir = tmpDir(t, 'ugw-wb-models-');
   const pool = createWorkbuddyPool({
     accounts: [{ ...ACCOUNT('wb-1'), enterpriseId: '' }],
     region: 'cn',
     config: {
+      dataDir: dir,
       endpoint: stub.origin,
       endpoints: { chat: `${stub.origin}${CHAT_PATH}`, auth: stub.origin, biz: stub.origin, models: stub.origin },
       realmBases: [stub.origin, stub.origin, stub.origin],

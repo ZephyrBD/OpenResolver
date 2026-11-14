@@ -97,7 +97,7 @@ test('does not mutate the inbound messages array', () => {
 
 test('the shipped profile still has three blocks and 10701 chars', () => {
   const profile = JSON.parse(
-    readFileSync(new URL('../profile/zcode-profile.json', import.meta.url), 'utf8'),
+    readFileSync(new URL('../pools/zcode/profile.json', import.meta.url), 'utf8'),
   );
   assert.equal(profile.system.length, 3);
   assert.equal(profile.system.reduce((n, b) => n + b.text.length, 0), 10701);
