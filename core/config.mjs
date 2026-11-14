@@ -10,7 +10,7 @@ export function loadConfig(env = process.env) {
     version: '0.1.0',
     host: env.HOST || '0.0.0.0',
     port: num(env.PORT, 8790),
-    dataDir: env.UGW_DATA_DIR || path.join(import.meta.dirname, 'data'),
+    dataDir: env.UGW_DATA_DIR || path.join(import.meta.dirname, '..', 'data'),
     maxBodyBytes: num(env.UGW_MAX_BODY_BYTES, 8 * 1024 * 1024),
     maxAttempts: num(env.UGW_MAX_ATTEMPTS, 3),
     openMode: env.UGW_OPEN_MODE !== '0',

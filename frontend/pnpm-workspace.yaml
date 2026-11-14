@@ -1,3 +1,4 @@
-onlyBuiltDependencies:
-  - esbuild
-  - '@parcel/watcher'
+# pnpm 12：允许跑构建脚本的依赖（原 onlyBuiltDependencies 已改为 mapping 形式）
+allowBuilds:
+  esbuild: true
+  '@parcel/watcher': true
