@@ -27,6 +27,8 @@ services:
       UGW_SECURE_COOKIE: ${UGW_SECURE_COOKIE:-0}
       UGW_UPSTREAM_TIMEOUT_MS: ${UGW_UPSTREAM_TIMEOUT_MS:-600000}
       UGW_MAX_ATTEMPTS: ${UGW_MAX_ATTEMPTS:-3}
+      # 1 = WB 上游 400 时把 payload/响应落盘到 data/debug/ 取证（平时关闭）
+      UGW_CAPTURE_400: ${UGW_CAPTURE_400:-0}
       ZCODE_APP_VERSION: ${ZCODE_APP_VERSION:-3.16.3}
     volumes:
       # 全部持久化状态：账号、密钥、会话、用量、签到。迁移 = 整目录拷走
