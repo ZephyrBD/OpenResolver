@@ -9,9 +9,22 @@ function textOfContent(content) {
   return '';
 }
 
-/** Anthropic Messages 请求体 → OpenAI Chat Completions 请求体（不含 model）。 */
+/** Anthropic Messages 请求体 → OpenAI Chat Completions 请求体（不含 model）。
+ * 尾部做 tool 配对修复（WB 上游对 tool_calls 与 role:tool 不配对直接 400）：
+ * - role:tool 必须紧跟带 tool_calls 的 assistant 消息，同轮文本垫后；
+ * - 没等到结果的 tool_call 合成占位结果；配不到调用的孤儿结果丢弃；
+ * - 缺 id 的 tool_use 合成 id，缺 tool_use_id 的结果按顺序认领最早的未闭合调用。 */
 export function messagesToChatCompletions(body) {
   const messages = [];
+  let synthN = 0;
+  const synthId = () => `toolu_gw_${++synthN}`;
+  const openCalls = []; // 尚未收到结果的 tool_call id（FIFO，须在下一条 assistant 前闭合）
+
+  const flushOpenCalls = () => {
+    while (openCalls.length) {
+      messages.push({ role: 'tool', tool_call_id: openCalls.shift(), content: '[tool call aborted - no result]' });
+    }
+  };
 
   const systemText =
     typeof body.system === 'string'
@@ -25,6 +38,7 @@ export function messagesToChatCompletions(body) {
     const blocks = Array.isArray(msg.content) ? msg.content : null;
 
     if (msg.role === 'assistant') {
+      flushOpenCalls();
       const out = { role: 'assistant', content: null };
       if (blocks) {
         const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('');
@@ -32,11 +46,14 @@ export function messagesToChatCompletions(body) {
         const calls = blocks
           .filter((b) => b?.type === 'tool_use')
           .map((b) => ({
-            id: b.id,
+            id: b.id || synthId(),
             type: 'function',
             function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
           }));
-        if (calls.length) out.tool_calls = calls;
+        if (calls.length) {
+          out.tool_calls = calls;
+          openCalls.push(...calls.map((c) => c.id));
+        }
       } else {
         out.content = msg.content ?? null;
       }
@@ -45,17 +62,34 @@ export function messagesToChatCompletions(body) {
     }
 
     if (blocks) {
-      const text = blocks.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('');
-      if (text) messages.push({ role: 'user', content: text });
+      const texts = [];
       for (const b of blocks) {
-        if (b?.type !== 'tool_result') continue;
-        messages.push({ role: 'tool', tool_call_id: b.tool_use_id, content: textOfContent(b.content) });
+        if (b?.type !== 'tool_result') {
+          if (typeof b === 'string') texts.push(b);
+          else if (b?.type === 'text') texts.push(b.text ?? '');
+          continue;
+        }
+        let id = b.tool_use_id;
+        if (id) {
+          const at = openCalls.indexOf(id);
+          if (at === -1) continue; // 孤儿结果：上游会判不配对，丢弃
+          openCalls.splice(at, 1);
+        } else {
+          id = openCalls.shift();
+          if (!id) continue;
+        }
+        messages.push({ role: 'tool', tool_call_id: id, content: textOfContent(b.content) });
       }
+      flushOpenCalls();
+      const text = texts.join('');
+      if (text) messages.push({ role: 'user', content: text });
       continue;
     }
 
+    flushOpenCalls();
     messages.push({ role: 'user', content: msg.content ?? '' });
   }
+  flushOpenCalls();
 
   const out = { messages };
 
@@ -93,6 +127,7 @@ export async function* openaiSseToAnthropicEvents(eventStream, model) {
   let nextIndex = 0;
   let textIndex = -1; // 显式跟踪文本块 index；nextIndex 会被后续 tool 块消耗，不能再用 nextIndex-1 回指
   const toolBlockOf = new Map();
+  let synthIdN = 0; // 上游 delta 缺 id 时合成的 Anthropic tool_use id 计数
   let stopReason = 'end_turn';
   let usage = { input_tokens: 0, output_tokens: 0 };
 
@@ -138,19 +173,23 @@ export async function* openaiSseToAnthropicEvents(eventStream, model) {
         yield { type: 'content_block_delta', index: textIndex, delta: { type: 'text_delta', text: delta.content } };
       }
       for (const tc of delta.tool_calls ?? []) {
-        if (tc.index != null && !toolBlockOf.has(tc.index)) {
+        // WB 上游偶发缺 index/id 的 tool_call delta：index 缺失时按 id 聚块，
+        // 两者都缺时并入最近的自动块；Anthropic 块 index 按首次到达顺序分配。
+        const key = tc.index != null ? `#${tc.index}` : tc.id ? `id:${tc.id}` : '@auto';
+        if (!toolBlockOf.has(key)) {
           if (textIndex !== -1) {
             yield { type: 'content_block_stop', index: textIndex };
             textIndex = -1;
           }
-          toolBlockOf.set(tc.index, startIndex());
+          toolBlockOf.set(key, startIndex());
+          if (key !== '@auto') toolBlockOf.delete('@auto');
           yield {
             type: 'content_block_start',
-            index: toolBlockOf.get(tc.index),
-            content_block: { type: 'tool_use', id: tc.id, name: tc.function?.name, input: {} },
+            index: toolBlockOf.get(key),
+            content_block: { type: 'tool_use', id: tc.id || `toolu_gw_${++synthIdN}`, name: tc.function?.name ?? '', input: {} },
           };
         }
-        const idx = toolBlockOf.get(tc.index);
+        const idx = toolBlockOf.get(key);
         if (tc.function?.arguments) {
           yield { type: 'content_block_delta', index: idx, delta: { type: 'input_json_delta', partial_json: tc.function.arguments } };
         }

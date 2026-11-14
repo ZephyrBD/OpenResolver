@@ -143,6 +143,65 @@ test('maps finish_reason stop to end_turn and closes an unclosed text block at [
   ]);
 });
 
+// ---- WB 上游 tool_call delta 缺 index/id/name 的防御 ----
+
+test('缺 index/id 的 tool_call delta 合成 id 并把连续参数增量并入同一块', async () => {
+  function* source() {
+    yield {
+      event: 'message',
+      data: JSON.stringify(chunk('c4', { tool_calls: [{ function: { name: 'get_weather', arguments: '{"ci' } }] })),
+    };
+    yield {
+      event: 'message',
+      data: JSON.stringify(chunk('c4', { tool_calls: [{ function: { arguments: 'ty":"HZ"}' } }] })),
+    };
+    yield { event: 'message', data: JSON.stringify(chunk('c4', {}, { finish_reason: 'tool_calls' })) };
+    yield { event: 'message', data: '[DONE]' };
+  }
+
+  const events = collect(await Array.fromAsync(openaiSseToAnthropicEvents(source(), 'GLM-5.3')));
+
+  const starts = events.filter((e) => e.type === 'content_block_start');
+  assert.equal(starts.length, 1);
+  assert.match(starts[0].content_block.id, /^toolu_gw_\d+$/);
+  assert.equal(starts[0].content_block.name, 'get_weather');
+  const deltas = events.filter((e) => e.type === 'content_block_delta');
+  assert.deepEqual(deltas.map((d) => d.delta.partial_json), ['{"ci', 'ty":"HZ"}']);
+  assert.deepEqual(deltas.map((d) => d.index), [0, 0]);
+  assert.equal(events.at(-2).delta.stop_reason, 'tool_use');
+});
+
+test('缺 index 但带 id 的 tool_call delta 按 id 聚块，缺失的 name 兜底为空串', async () => {
+  function* source() {
+    yield {
+      event: 'message',
+      data: JSON.stringify(chunk('c5', { tool_calls: [{ id: 'call_x', type: 'function', function: { arguments: '{"a":1}' } }] })),
+    };
+    yield {
+      event: 'message',
+      data: JSON.stringify(chunk('c5', { tool_calls: [{ id: 'call_x', function: { arguments: '}' } }] })),
+    };
+    yield {
+      event: 'message',
+      data: JSON.stringify(chunk('c5', { tool_calls: [{ id: 'call_y', type: 'function', function: { name: 'g', arguments: '' } }] })),
+    };
+    yield { event: 'message', data: JSON.stringify(chunk('c5', {}, { finish_reason: 'tool_calls' })) };
+    yield { event: 'message', data: '[DONE]' };
+  }
+
+  const events = collect(await Array.fromAsync(openaiSseToAnthropicEvents(source(), 'GLM-5.3')));
+
+  const starts = events.filter((e) => e.type === 'content_block_start');
+  assert.deepEqual(
+    starts.map((s) => [s.content_block.id, s.content_block.name]),
+    [['call_x', ''], ['call_y', 'g']],
+  );
+  assert.deepEqual(
+    events.filter((e) => e.type === 'content_block_delta').map((d) => [d.index, d.delta.partial_json]),
+    [[0, '{"a":1}'], [0, '}']],
+  );
+});
+
 function anthropicEventSource(events) {
   return events;
 }

@@ -307,6 +307,79 @@ test('chunked aggregation equals whole-input aggregation for the same SSE fixtur
   assert.deepEqual(chunked, whole);
 });
 
+// ---- WB 上游 400 "tool calls and tool results do not match" 的防御：配对修复 ----
+
+test('tool_result 优先回传：role:tool 紧跟 assistant tool_calls，同轮文本垫后', () => {
+  const out = messagesToChatCompletions({
+    messages: [
+      { role: 'user', content: 'weather?' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'f', input: {} }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'also note this' },
+          { type: 'tool_result', tool_use_id: 't1', content: '28C' },
+        ],
+      },
+    ],
+  });
+
+  assert.deepEqual(out.messages.map((m) => m.role), ['user', 'assistant', 'tool', 'user']);
+  assert.equal(out.messages[2].tool_call_id, 't1');
+  assert.equal(out.messages[2].content, '28C');
+  assert.equal(out.messages[3].content, 'also note this');
+});
+
+test('缺结果的 tool_call 合成占位结果，孤儿 tool_result 丢弃', () => {
+  const out = messagesToChatCompletions({
+    messages: [
+      { role: 'user', content: 'go' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 't1', name: 'f', input: {} },
+          { type: 'tool_use', id: 't2', name: 'g', input: {} },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ghost', content: '??' }] },
+    ],
+  });
+
+  const tools = out.messages.filter((m) => m.role === 'tool');
+  assert.deepEqual(tools, [
+    { role: 'tool', tool_call_id: 't1', content: 'ok' },
+    { role: 'tool', tool_call_id: 't2', content: '[tool call aborted - no result]' },
+  ]);
+  assert.equal(out.messages.at(-1).tool_call_id, 't2', '孤儿结果丢弃，结尾是 t2 的占位结果');
+});
+
+test('tool_use 缺 id 时合成 id，后续缺 tool_use_id 的结果按顺序配对', () => {
+  const out = messagesToChatCompletions({
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', name: 'f', input: { x: 1 } },
+          { type: 'tool_use', name: 'g', input: { x: 2 } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', content: 'r1' },
+          { type: 'tool_result', content: 'r2' },
+        ],
+      },
+    ],
+  });
+
+  const [a] = out.messages;
+  assert.deepEqual(a.tool_calls.map((c) => c.id), out.messages.slice(1).map((m) => m.tool_call_id));
+  assert.deepEqual(out.messages.slice(1).map((m) => m.content), ['r1', 'r2']);
+  assert.ok(a.tool_calls.every((c) => c.id && c.function.name));
+});
+
 // ---- 往返等价 ----
 
 function semanticOfAnthropic(body) {

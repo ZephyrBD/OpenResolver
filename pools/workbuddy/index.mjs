@@ -11,6 +11,7 @@
 //
 // Anthropic 事件 → message JSON 的聚合抄自 pools/trae/index.mjs（不 import 池实现，简报约束）。
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { HttpError } from '../../http/errors.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
@@ -207,6 +208,17 @@ export function createWorkbuddyPool({
 
       if (!upstream.ok) {
         const text = await upstream.text();
+        // UGW_CAPTURE_400=1 时把被拒 payload 与上游响应落盘（tool 配对问题的取证开关）
+        if (process.env.UGW_CAPTURE_400 && upstream.status === 400) {
+          try {
+            const dir = path.join(dataDir, 'debug');
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(
+              path.join(dir, `${name}-400-${Date.now()}.json`),
+              JSON.stringify({ model: upstreamModel, payload, upstreamStatus: upstream.status, upstreamBody: text.slice(0, 4000) }, null, 2),
+            );
+          } catch {}
+        }
         const cls = classifyUpstreamError(upstream.status, text, { now });
         if (cls.modelLevel) {
           // 模型级限流：记注册表、不冷却账号，换下一个账号接着试
