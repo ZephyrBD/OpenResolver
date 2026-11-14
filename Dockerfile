@@ -27,10 +27,8 @@ COPY core/*.mjs ./core/
 COPY adapters ./adapters
 COPY auth ./auth
 COPY http ./http
-COPY identity ./identity
 COPY panel ./panel
 COPY pools ./pools
-COPY profile ./profile
 COPY tools ./tools
 
 # 面板产物：静态服务 publicDir 默认指向 frontend/dist
