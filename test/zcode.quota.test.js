@@ -23,7 +23,7 @@ test('a live balance is parsed into a ratio and sent with x-device-mid', async (
   assert.equal(stub.requests[0].url, '/api/v1/zcode-plan/billing/balance');
   assert.equal(stub.requests[0].headers['x-device-mid'], 'device-abc');
   assert.equal(stub.requests[0].headers.authorization, `Bearer ${ACC.jwt}`);
-  assert.equal(stub.requests[0].headers['x-zcode-app-version'], '3.16.3');
+  assert.equal(stub.requests[0].headers['x-zcode-app-version'], '3.18.2');
   assert.equal(stub.requests[0].headers['x-session-id'], sessionIdFor(ACC.uid));
 });
 

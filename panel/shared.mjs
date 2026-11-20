@@ -15,7 +15,7 @@ const SECURITY_HEADERS = {
 
 const FLOW_TTL_MS = 10 * 60_000;
 const SENSITIVE_FIELDS = ['jwt', 'refreshToken', 'pat', 'jobToken', 'jobRefreshToken'];
-const ACCOUNT_PATCH_FIELDS = ['label', 'manualWeight', 'enabled'];
+const ACCOUNT_PATCH_FIELDS = ['label', 'manualWeight', 'enabled', 'captcha'];
 
 function clampManual(v) {
   const n = Number(v);
@@ -82,6 +82,8 @@ export function accountView(acc) {
     cooldownKind: acc.cooldownKind ?? null,
     consecutiveFails: acc.consecutiveFails ?? 0,
     quotaRatio: typeof acc.quotaRatio === 'number' ? acc.quotaRatio : null,
+    // ZCode 验证码参数存在账号上（3007 时人工补），面板回显便于确认是否已填
+    captcha: acc.captcha ? `***${String(acc.captcha).slice(-4)}` : '',
   };
   for (const field of SENSITIVE_FIELDS) {
     if (acc[field]) view[field] = `***${String(acc[field]).slice(-4)}`;

@@ -31,25 +31,23 @@ const DEAD = 'http://127.0.0.1:9';
 
 const endsAtSec = () => Date.now() / 1000 + 86_400;
 
-test('zcode claim: 领取缺失类型、重复调用幂等、1003 过期路径', async (t) => {
-  const st = {
-    balance: [{ plan_id: 'zcode-v3-start-plan-1030-wk', name: 'Weekend Build', status: 'active', ends_at: endsAtSec() }],
-  };
+test('zcode claim: 双来源择优领取，重复调用幂等（1003 → already）', async (t) => {
+  // 每日体验包在 balance 里已生效，但 billing 仍列出 → 领到 1003，按幂等成功处理
+  const balance = [{ plan_id: 'zcode-v3-start-plan-0817', name: 'Start Plan', status: 'active', ends_at: endsAtSec() }];
+  const claimCalls = [];
   const { origin, requests } = await startStub(t, async (req, res, rec) => {
     const path = rec.url.split('?')[0];
+    if (path === '/api/v1/event/report') return json(res, { code: 0 });
+    if (path === '/api/v1/marketing/touch') return json(res, { code: 0, data: { deliveries: [] } });
     if (path.endsWith('/billing/preview')) {
-      return json(res, { code: 0, data: { plans: [{ plan_id: 'zcode-v3-coding-plan-pro', name: 'Coding Plan', entitlements: [] }] } });
+      return json(res, {
+        code: 0,
+        data: { plans: [{ plan_id: 'zcode-v3-start-plan-0817', name: 'Start Plan', priority: 2, ends_at: endsAtSec() }] },
+      });
     }
-    if (path.endsWith('/billing/balance')) {
-      return json(res, { code: 0, data: { plans: st.balance, balances: [] } });
-    }
+    if (path.endsWith('/billing/balance')) return json(res, { code: 0, data: { plans: balance, balances: [] } });
     if (path.endsWith('/billing/claim')) {
-      const pid = bodyOf(rec).plan_id;
-      if (pid === 'zcode-v3-start-plan-0817') {
-        st.balance.push({ plan_id: pid, name: 'Start Plan', status: 'active', ends_at: endsAtSec() });
-        return json(res, { code: 0, data: { plan: { plan_id: pid } } });
-      }
-      if (pid.includes('coding')) return json(res, { code: 1001, msg: 'plan not exist' });
+      claimCalls.push(bodyOf(rec).plan_id);
       return json(res, { code: 1003, msg: 'target already exists' });
     }
     return json(res, { code: 0, data: {} });
@@ -60,34 +58,33 @@ test('zcode claim: 领取缺失类型、重复调用幂等、1003 过期路径',
 
   const r1 = await claimer.run(acc);
   assert.equal(r1.ok, true);
-  assert.equal(r1.status, 'claimed');
-  assert.deepEqual(r1.claimed, ['zcode-v3-start-plan-0817']);
-  // promo（-wk）已生效 → 只补缺的 daily：preview 候选(coding) + 0817 兑底
-  const claims1 = requests.filter((r) => r.url.includes('/billing/claim')).length;
-  assert.equal(claims1, 2);
-  assert.ok(requests.some((r) => r.headers['x-device-mid']), 'balance 必须带 x-device-mid');
+  assert.equal(r1.status, 'already', '1003 是幂等成功，不是失败');
+  assert.deepEqual(claimCalls, ['zcode-v3-start-plan-0817']);
+  assert.ok(requests.some((r) => r.url.includes('/api/v1/event/report')), '领取前必须补报激活事件');
 
-  // 第二次：daily 已入 balance，两类都在效 → already 且不再发 claim
-  const claimsBefore = requests.filter((r) => r.url.includes('/billing/claim')).length;
+  const before = claimCalls.length;
   const r2 = await claimer.run(acc);
   assert.equal(r2.status, 'already');
-  assert.equal(requests.filter((r) => r.url.includes('/billing/claim')).length, claimsBefore);
+  assert.equal(claimCalls.length, before + 1, '每次都按服务端现状判定，不依赖本地缓存');
 
   // status 只读汇总
   const s = await claimer.status(acc);
   assert.equal(s.supported, true);
-  assert.equal(s.checkedIn, true);
+  assert.equal(s.checkedIn, false, '只有 daily 在效，promo 缺失');
+  assert.equal(s.details.activeKinds.includes('daily'), true);
 });
 
-test('zcode claim: 全部候选 1003 → already（体验包过期）', async (t) => {
-  const { origin } = await startStub(t, async (req, res, rec) => {
+test('zcode claim: 两源都无套餐 → none（中性结论，不判失败）', async (t) => {
+  const { origin, requests } = await startStub(t, async (req, res, rec) => {
     const path = rec.url.split('?')[0];
-    if (path.endsWith('/billing/claim')) return json(res, { code: 1003, msg: 'target already exists' });
+    if (path === '/api/v1/event/report') return json(res, { code: 0 });
+    if (path === '/api/v1/marketing/touch') return json(res, { code: 0, data: { deliveries: [] } });
     return json(res, { code: 0, data: { plans: [], balances: [] } });
   });
   const r = await zcodeClaimer({ origin }).run({ uid: 'u2', jwt: 'j' });
   assert.equal(r.ok, true);
-  assert.equal(r.status, 'already');
+  assert.equal(r.status, 'none');
+  assert.ok(!requests.some((x) => x.url.endsWith('/billing/claim') && x.method === 'POST'), '无候选时不得乱打领取接口');
 });
 
 test('qoder claim: campaigns 领取 → replayed 幂等', async (t) => {

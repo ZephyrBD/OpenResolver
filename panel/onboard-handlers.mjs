@@ -10,6 +10,7 @@ import { readJson, DEFAULT_MAX_BODY_BYTES } from '../http/body.mjs';
 import { readJson as readJsonFile, writeJson as writeJsonFile } from './store.mjs';
 import { FLOW_TTL_MS, claimerCheckinOf, poolByName } from './shared.mjs';
 import { createLoginFlow as zcCreateLoginFlow, pollLogin as zcPollLogin, persistAccount as persistZcAccount } from '../pools/zcode/onboard.mjs';
+import { deviceIdFor, sessionIdFor } from '../core/fingerprint.mjs';
 import { buildLoginUrl, accountFromCallback as traeAccountFromCallback, persistAccount as persistTraeAccount } from '../pools/trae/login-link.mjs';
 import { accountFromPat as qoderAccountFromPat, persistAccount as persistQoderAccount } from '../pools/qoder/onboard.mjs';
 import { createLoginFlow as wbCreateLoginFlow, pollLoginAccount as wbPollLoginAccount, accountFromPoll as wbAccountFromPoll, persistAccount as persistWbAccount } from '../pools/workbuddy/onboard.mjs';
@@ -87,7 +88,8 @@ export function createOnboardHandlers(ctx) {
       // 两段式：link 生成 authorize_url（flow 存 pollToken）；poll 轮询至 ready 入库
       const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
       if (body.action === 'link') {
-        const flow = await zcCreateLoginFlow({ origin: zcodeOrigin, fetchImpl, now });
+        const region = body.region === 'cn' ? 'cn' : 'intl';
+        const flow = await zcCreateLoginFlow({ origin: zcodeOrigin, region, fetchImpl, now });
         const { flows, dirty } = pruneFlows();
         if (dirty) writeJsonFile(flowsFile, { flows });
         const flowId = flow.flowId;
@@ -103,10 +105,17 @@ export function createOnboardHandlers(ctx) {
         const out = await zcPollLogin({ origin: zcodeOrigin, flowId: body.flowId, pollToken: flow.pollToken, fetchImpl, now });
         if (out.status !== 'ready') return sendJson(res, 200, { status: out.status, flowId: body.flowId });
         const pool = poolByName(pools, 'zcode');
-        persistZcAccount(accountsDirOf(pool), out.account);
+        // 指纹落盘：网关所有上游请求都靠 x-device-mid/x-session-id，derive 一次存住，
+        // 否则账号一旦被改写/迁移就退回派生值，与登录时的设备关联不上（3012 风控来源之一）。
+        const account = {
+          ...out.account,
+          deviceId: out.account.deviceId || deviceIdFor(out.account.uid),
+          sessionId: out.account.sessionId || sessionIdFor(out.account.uid),
+        };
+        persistZcAccount(accountsDirOf(pool), account);
         delete flows[body.flowId];
         writeJsonFile(flowsFile, { flows });
-        const acc = upsertRuntimeAccount(pool, out.account);
+        const acc = upsertRuntimeAccount(pool, account);
         // 登录即领取（best-effort）：结果随响应带回，失败不阻断入库
         let claim = null;
         const claimer = claimers.zcode;

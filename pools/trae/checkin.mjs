@@ -124,7 +124,8 @@ export function createClaimer({
         detail: { claim, after },
       });
     } catch (e) {
-      return failResult(e?.message || '签到失败');
+      // 探测全部被拒（鉴权/凭证问题）说明换 body/scheme 都救不回来，窗口内不必再试
+      return failResult(e?.message || '签到失败', { detail: { retryable: /401|403|token|jwt|auth/i.test(String(e?.message ?? '')) ? false : undefined } });
     }
   }
 

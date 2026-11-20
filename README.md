@@ -20,7 +20,7 @@ OpenResolver 把 ZCode、Qoder、Trae、WorkBuddy、华为 CodeArts 等平台的
 | 多上游账号池 | ZCode / Qoder（cn+global）/ Trae / WorkBuddy（cn+global）/ 华为 CodeArts，共 7 个池   |
 | 智能调度   | 加权选号、Top-N 候选、粘性会话、额度比例入权重、失败换号、冷却与熔断                                       |
 | 密钥体系   | `zsk_` 前缀、只存 SHA-256、有效期 / 池白名单 / 模型白名单 / IP 白名单 / token 配额                 |
-| 额度与签到  | 每账号额度明细、自动签到/领取、每日定时补领、ZCode 周末包抢领                                          |
+| 额度与签到  | 每账号额度明细、自动领取（北京时间 19:00–23:59 窗口内每 30 分钟补领）、ZCode 双来源套餐领取 + 周末包抢领 |
 | 管理面板   | 仪表盘、账号（凭证检测/刷新模型）、密钥（14 天用量与限额进度）、设置四页；Vue 3 + Element Plus 构建（`frontend/`，产物进 Docker 镜像），支持浏览器内完成账号接入                                       |
 | 安全     | 请求体上限、上游总超时、客户端断开即 abort、忽略伪造 XFF、面板 CSRF + 登录限速                            |
 | 零依赖    | 仅 Node.js ≥ 22 内置模块，无 npm 运行时依赖                                             |
@@ -179,9 +179,35 @@ curl -s -X POST http://127.0.0.1:8790/v1/messages \
 | `UGW_UPSTREAM_TIMEOUT_MS` | `600000`             | 单次上游总超时                                  |
 | `UGW_SECURE_COOKIE`       | `0`                  | 面板会话 Cookie 是否加 `Secure`（HTTPS 部署时设 `1`） |
 | `ZCODE_UPSTREAM_ORIGIN`   | `https://zcode.z.ai` | ZCode 上游地址                               |
-| `ZCODE_APP_VERSION`       | `3.16.3`             | ZCode 客户端版本（漂移可能触发 3012）                 |
+| `ZCODE_APP_VERSION`       | `3.18.2`             | ZCode 客户端版本（漂移可能触发 3012；marketing 活动需 ≥3.17.1） |
 
-调度参数（冷却时长、熔断阈值、自动领取时间、额度折算率等）在面板 **设置** 页修改，持久化到 `data/pool-settings.json`；也支持 `UGW_*` 环境变量作为首次默认值。
+调度参数（冷却时长、熔断阈值、自动领取窗口、额度折算率等）在面板 **设置** 页修改，持久化到 `data/pool-settings.json`；也支持 `UGW_*` 环境变量作为首次默认值。
+
+### 自动领取窗口
+
+默认每天 **北京时间 19:00–23:59** 自动补领，窗口内每 30 分钟对「当天还没领到」的账号重试一次：
+
+- 已领到（`claimed` / `already` / `none`）的账号当天不再打上游；
+- 名额用完（1005）、网络失败等可恢复失败会继续重试；
+- 凭证失效（401）、验证码未通过（3007）、凭证不可用时当天直接放弃，原因记录在 `data/claims.json`。
+
+改窗口用面板设置页的 `autoClaimStartHour` / `autoClaimEndHour`（终点 24 表示 23:59），
+或环境变量 `UGW_AUTO_CLAIM_START_HOUR` / `UGW_AUTO_CLAIM_END_HOUR`。旧的单整点 `autoClaimHour`
+（含 `UGW_AUTO_CLAIM_HOUR`）仍可读，会按「该点到下一整点」换算。
+
+### ZCode 套餐领取
+
+ZCode 每天会尝试领取当日可领的套餐（每日体验包与限时活动包），来源有两个：
+
+1. `billing/preview` —— 账号资格套餐；
+2. `marketing/touch` —— 运营活动位下发的套餐，领取后回执 `touch/action`。
+
+两来源按套餐 ID 合并去重，按上游 `priority` 择优，并按 `starts_at` / `ends_at` 判断活动窗口
+（未开窗会提示准确开启时间，已结束不会发起领取）。领取前会补报 `app_launch` / `app_daily_active`
+激活事件；失败只记日志，不阻断领取。
+
+若上游返回 `3007`（阿里云无痕验证未通过），在面板 **账号** 页该账号的「验证码参数」里填入从浏览器
+抓到的 `X-Aliyun-Captcha-Verify-Param` 值即可，下次领取会带上该头。脚本不会自动求解验证码。
 
 ### 数据目录
 
@@ -192,7 +218,8 @@ data/
 ├── pool-settings.json        # 调度与领取设置
 ├── pools/<pool>/accounts.json# 上游账号凭证（明文 JWT / refreshToken）
 ├── usage/YYYY-MM-DD.jsonl    # 按天分片的用量记录
-└── claims.json               # 自动领取结果
+├── claims.json               # 自动领取结果
+└── claims-state.json         # 当天各账号领取结论（窗口内据此决定是否重试）
 ```
 
 > **`data/` 属于机密**。`pools/*/accounts.json` 里是可直接使用的上游凭证，不要提交、不要外发；备份请整目录打包并妥善保管。

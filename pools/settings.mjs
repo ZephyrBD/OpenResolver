@@ -19,7 +19,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   breakerCapMs: 21_600_000, // 熔断封顶（原 BREAKER_CAP_MS）
   quotaExhaustedCooldownMs: 43_200_000, // 额度耗尽（原 QUOTA_EXHAUSTED_MS）
   autoClaimEnabled: 1, // 自动领取总开关（0/1）
-  autoClaimHour: 9, // 每日补领时点（北京时间 0-23）
+  autoClaimStartHour: 19, // 每日签到窗口起点（北京时间 0-23）
+  autoClaimEndHour: 24, // 窗口终点（不含）；24 = 当天末 23:59
   weekendGrabEnabled: 1, // ZCode 周末活动包抢领（0/1）
   wbCreditTokensRate: 1.265, // WB credits→tokens：按 glm-5.2 倍率 x0.79 的倒数
   qoderCreditTokensRate: 1, // Qoder credit→tokens：默认 1:1
@@ -33,6 +34,7 @@ const BOOLEAN_KEYS = new Set(['autoClaimEnabled', 'weekendGrabEnabled']);
 const FLOAT_MIN = new Set(['wbCreditTokensRate', 'qoderCreditTokensRate', 'codeartsCreditTokensRate']);
 const HOUR_MIN = 0;
 const HOUR_MAX = 23;
+const WINDOW_END_MAX = 24;
 
 const ENV_KEYS = {
   maxInFlight: 'UGW_MAX_INFLIGHT',
@@ -48,7 +50,8 @@ const ENV_KEYS = {
   breakerCapMs: 'UGW_BREAKER_CAP_MS',
   quotaExhaustedCooldownMs: 'UGW_QUOTA_EXHAUSTED_COOLDOWN_MS',
   autoClaimEnabled: 'UGW_AUTO_CLAIM',
-  autoClaimHour: 'UGW_AUTO_CLAIM_HOUR',
+  autoClaimStartHour: 'UGW_AUTO_CLAIM_START_HOUR',
+  autoClaimEndHour: 'UGW_AUTO_CLAIM_END_HOUR',
   weekendGrabEnabled: 'UGW_WEEKEND_GRAB',
   wbCreditTokensRate: 'UGW_WB_CREDIT_TOKENS_RATE',
   qoderCreditTokensRate: 'UGW_QODER_CREDIT_TOKENS_RATE',
@@ -62,7 +65,8 @@ export function clampSetting(key, value) {
   const n = typeof value === 'boolean' ? (value ? 1 : 0) : typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
   if (typeof n !== 'number' || !Number.isFinite(n)) return undefined;
   if (BOOLEAN_KEYS.has(key)) return n > 0 ? 1 : 0;
-  if (key === 'autoClaimHour') return Math.min(HOUR_MAX, Math.max(HOUR_MIN, Math.floor(n)));
+  if (key === 'autoClaimStartHour') return Math.min(HOUR_MAX, Math.max(HOUR_MIN, Math.floor(n)));
+  if (key === 'autoClaimEndHour') return Math.min(WINDOW_END_MAX, Math.max(HOUR_MIN, Math.floor(n)));
   if (FLOAT_MIN.has(key)) return Math.max(0.0001, n);
   if (MIN_ONE.has(key)) return Math.max(1, Math.floor(n));
   return Math.max(0, Math.floor(n));
@@ -89,6 +93,36 @@ function readFileSettings(file) {
   }
 }
 
+/** 旧 autoClaimHour（单整点）→ [hour, hour+1)；新键存在时优先新键。 */
+const LEGACY_HOUR_KEY = 'autoClaimHour';
+const LEGACY_HOUR_ENV = 'UGW_AUTO_CLAIM_HOUR';
+
+/**
+ * 把旧单整点设置映射到窗口，仅在未显式给出新键的场合生效。
+ * 返回 { start, end } 或 null。env 与 file 都看，env 优先。
+ */
+function legacyWindow(env, fromFile) {
+  const hasNewEnv = env?.UGW_AUTO_CLAIM_START_HOUR !== undefined && env?.UGW_AUTO_CLAIM_START_HOUR !== '';
+  const hasNewFile = fromFile && ('autoClaimStartHour' in fromFile || 'autoClaimEndHour' in fromFile);
+  if (hasNewEnv || hasNewFile) return null;
+
+  const candidates = [env?.[LEGACY_HOUR_ENV], fromFile?.[LEGACY_HOUR_KEY]];
+  for (const raw of candidates) {
+    if (raw === undefined || raw === null || raw === '') continue;
+    const hour = clampSetting('autoClaimStartHour', raw);
+    if (hour !== undefined) return { start: hour, end: Math.min(WINDOW_END_MAX, hour + 1) };
+  }
+  return null;
+}
+
+/** 窗口合法性：终点必须大于起点；不合法时退化为起点 + 1 小时。 */
+function normalizeWindow(settings) {
+  if (settings.autoClaimEndHour <= settings.autoClaimStartHour) {
+    settings.autoClaimEndHour = Math.min(WINDOW_END_MAX, settings.autoClaimStartHour + 1);
+  }
+  return settings;
+}
+
 /**
  * 读设置：默认值 → 环境变量 → 文件（文件逐字段覆盖）。
  * 文件损坏时静默回退到“默认值 + 环境变量”。
@@ -96,13 +130,19 @@ function readFileSettings(file) {
 export function loadSettings({ file, env = process.env } = {}) {
   const settings = defaultsFromEnv(env);
   const fromFile = readFileSettings(file);
-  if (!fromFile) return settings;
-  for (const key of SETTING_KEYS) {
-    if (!(key in fromFile)) continue;
-    const clamped = clampSetting(key, fromFile[key]);
-    if (clamped !== undefined) settings[key] = clamped;
+  if (fromFile) {
+    for (const key of SETTING_KEYS) {
+      if (!(key in fromFile)) continue;
+      const clamped = clampSetting(key, fromFile[key]);
+      if (clamped !== undefined) settings[key] = clamped;
+    }
   }
-  return settings;
+  const legacy = legacyWindow(env, fromFile);
+  if (legacy) {
+    settings.autoClaimStartHour = legacy.start;
+    settings.autoClaimEndHour = legacy.end;
+  }
+  return normalizeWindow(settings);
 }
 
 /** 原子写：tmp + rename，权限 0o600。 */

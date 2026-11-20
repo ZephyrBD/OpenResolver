@@ -18,7 +18,8 @@ test('new cooldown/auto-claim keys default correctly with no file or env', () =>
   assert.equal(settings.breakerCapMs, 21_600_000);
   assert.equal(settings.quotaExhaustedCooldownMs, 43_200_000);
   assert.equal(settings.autoClaimEnabled, 1);
-  assert.equal(settings.autoClaimHour, 9);
+  assert.equal(settings.autoClaimStartHour, 19);
+  assert.equal(settings.autoClaimEndHour, 24);
   assert.equal(settings.weekendGrabEnabled, 1);
 });
 
@@ -31,7 +32,7 @@ test('environment variables override the new keys', () => {
       UGW_BREAKER_CAP_MS: '3600000',
       UGW_QUOTA_EXHAUSTED_COOLDOWN_MS: '7200000',
       UGW_AUTO_CLAIM: '0',
-      UGW_AUTO_CLAIM_HOUR: '8',
+      UGW_AUTO_CLAIM_START_HOUR: '8',
       UGW_WEEKEND_GRAB: '0',
     },
   });
@@ -39,7 +40,7 @@ test('environment variables override the new keys', () => {
   assert.equal(settings.breakerCapMs, 3_600_000);
   assert.equal(settings.quotaExhaustedCooldownMs, 7_200_000);
   assert.equal(settings.autoClaimEnabled, 0);
-  assert.equal(settings.autoClaimHour, 8);
+  assert.equal(settings.autoClaimStartHour, 8);
   assert.equal(settings.weekendGrabEnabled, 0);
 });
 
@@ -52,7 +53,7 @@ test('file values override and clamp: duration 0 -> 1, hour 99 -> 23, flag 5 -> 
       breakerCapMs: -5,
       quotaExhaustedCooldownMs: 0,
       autoClaimEnabled: 5,
-      autoClaimHour: 99,
+      autoClaimStartHour: 99,
       weekendGrabEnabled: 'yes',
     }),
   );
@@ -61,7 +62,7 @@ test('file values override and clamp: duration 0 -> 1, hour 99 -> 23, flag 5 -> 
   assert.equal(settings.breakerCapMs, 1);
   assert.equal(settings.quotaExhaustedCooldownMs, 1);
   assert.equal(settings.autoClaimEnabled, 1);
-  assert.equal(settings.autoClaimHour, 23);
+  assert.equal(settings.autoClaimStartHour, 23);
   assert.equal(settings.weekendGrabEnabled, 1, '非空字符串 >0 视为开');
 });
 
@@ -76,7 +77,7 @@ test('patchSettings clamps and persists all new keys atomically', () => {
       breakerCapMs: 2000,
       quotaExhaustedCooldownMs: 3000,
       autoClaimEnabled: false,
-      autoClaimHour: -1,
+      autoClaimStartHour: -1,
       weekendGrabEnabled: 0,
     },
   });
@@ -84,7 +85,7 @@ test('patchSettings clamps and persists all new keys atomically', () => {
   assert.equal(next.breakerCapMs, 2000);
   assert.equal(next.quotaExhaustedCooldownMs, 3000);
   assert.equal(next.autoClaimEnabled, 0);
-  assert.equal(next.autoClaimHour, 0);
+  assert.equal(next.autoClaimStartHour, 0);
   assert.equal(next.weekendGrabEnabled, 0);
 
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));

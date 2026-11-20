@@ -205,7 +205,9 @@ export function createClaimer({
       }
       return result;
     } catch (e) {
-      return failResult(e?.message || '签到失败');
+      // 鉴权类失败当天重试无意义；网络抖动/5xx 交给窗口内重试
+      const auth = /401|403|unauthor|token/i.test(String(e?.message ?? ''));
+      return failResult(e?.message || '签到失败', { detail: { retryable: auth ? false : undefined } });
     }
   }
 

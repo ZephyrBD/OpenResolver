@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from '../pools/zcode/constants.mjs';
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION, ZCODE_MARKETING_MIN_APP_VERSION } from '../pools/zcode/constants.mjs';
 import { createLoginFlow as zcCreateLoginFlow } from '../pools/zcode/onboard.mjs';
 
 /** 01 §4 三件套：上游事实默认值唯一落点 constants.mjs，其它文件不得再写字面量。 */
@@ -15,13 +15,15 @@ test('zcode 上游默认 origin/appVersion 只在 constants.mjs 定义', async (
   for (const name of fs.readdirSync(dir)) {
     if (name === 'constants.mjs' || !name.endsWith('.mjs')) continue;
     const src = fs.readFileSync(path.join(dir, name), 'utf8');
-    if (src.includes('https://zcode.z.ai') || src.includes("'3.16.3'")) offenders.push(name);
+    if (src.includes('https://zcode.z.ai') || src.includes("'3.18.2'")) offenders.push(name);
   }
   assert.deepEqual(offenders, [], `池文件不得内联上游默认值：${offenders.join(', ')}`);
 
   // onboard 默认参数确实引用 constants（签名不含字面量即可由上一步保证）
   assert.equal(ZCODE_ORIGIN, 'https://zcode.z.ai');
-  assert.equal(ZCODE_APP_VERSION, '3.16.3');
+  assert.equal(ZCODE_APP_VERSION, '3.18.2');
+  // marketing/touch 在 3.16.x 返回 0 条活动，3.17.1+ 才下发
+  assert.equal(ZCODE_MARKETING_MIN_APP_VERSION, '3.17.1');
   assert.ok(zcCreateLoginFlow, 'onboard createLoginFlow 存在');
 });
 

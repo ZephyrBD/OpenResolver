@@ -129,6 +129,18 @@ test('panel.api: 新增/编辑/清冷却/删除账号全链路（含磁盘断言
   assert.equal(after.enabled, false);
   assert.equal(disk()[0].label, '改名');
 
+  // ZCode 验证码参数：可写入、落盘、回显只给尾 4 位
+  const capPatch = await panelFetch(base, `/api/pools/zcode/accounts/${added.id}`, {
+    method: 'PATCH',
+    cookies,
+    body: { captcha: 'AliyunCaptcha-verify-param-9f3c' },
+  });
+  assert.equal(capPatch.status, 200);
+  const capView = (await capPatch.json()).account;
+  assert.equal(capView.captcha, '***9f3c', '回显只给尾 4 位');
+  assert.equal(disk()[0].captcha, 'AliyunCaptcha-verify-param-9f3c', '磁盘保存完整值');
+  assert.equal(pool.accounts[0].captcha, 'AliyunCaptcha-verify-param-9f3c', '运行态立即生效');
+
   // 清冷却
   pool.scheduler.updateAccount(added.id, { cooldownUntil: Date.now() + 3_600_000, cooldownKind: 'rate_limit', consecutiveFails: 2 });
   const reset = await panelFetch(base, `/api/pools/zcode/accounts/${added.id}/reset`, { method: 'POST', cookies });

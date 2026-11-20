@@ -77,6 +77,8 @@ function cooldownClass(acc: PoolAccount): string {
 interface RowDraft {
   enabled: boolean
   weight: number
+  /** ZCode 验证码参数；留空表示清除。回显是 ***尾4位，重新输入会整体覆盖 */
+  captcha: string
 }
 
 const drafts = ref<Record<string, RowDraft>>({})
@@ -86,12 +88,15 @@ watch(
   (list) => {
     const next: Record<string, RowDraft> = {}
     for (const acc of list) {
-      next[acc.id] = { enabled: acc.enabled, weight: acc.manualWeight ?? 10 }
+      next[acc.id] = { enabled: acc.enabled, weight: acc.manualWeight ?? 10, captcha: '' }
     }
     drafts.value = next
   },
   { deep: true },
 )
+
+/** 只有 ZCode 的领取会用到 Aliyun 验证码参数（3007 时人工补） */
+const supportsCaptcha = computed(() => pool.value === 'zcode')
 
 async function saveAccount(acc: PoolAccount): Promise<void> {
   errText.value = ''
@@ -102,8 +107,28 @@ async function saveAccount(acc: PoolAccount): Promise<void> {
     return
   }
   try {
-    await patchAccount(pool.value, acc.id, { label: acc.label, enabled: draft.enabled, manualWeight: draft.weight })
+    const body: { label?: string; enabled: boolean; manualWeight: number; captcha?: string } = {
+      label: acc.label,
+      enabled: draft.enabled,
+      manualWeight: draft.weight,
+    }
+    // 空输入框表示"不改"；清了尾号回显就想清除时，输入一个空格以外的任意值再删掉不生效，
+    // 所以清除走显式的「清验证码」按钮，这里只提交非空值
+    if (supportsCaptcha.value && draft.captcha.trim()) body.captcha = draft.captcha.trim()
+    await patchAccount(pool.value, acc.id, body)
     await reload()
+  } catch (err) {
+    errText.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function clearCaptcha(acc: PoolAccount): Promise<void> {
+  errText.value = ''
+  try {
+    await patchAccount(pool.value, acc.id, { label: acc.label, enabled: acc.enabled, manualWeight: acc.manualWeight ?? 10, captcha: '' })
+    if (drafts.value[acc.id]) drafts.value[acc.id].captcha = ''
+    await reload()
+    toast(`账号 ${displayWithId(accountName(acc), acc.id)} 验证码参数已清除`, 'success')
   } catch (err) {
     errText.value = err instanceof Error ? err.message : String(err)
   }
@@ -200,6 +225,7 @@ const showManualImport = computed(() => pool.value === 'zcode')
           <th>状态</th>
           <th width="72">启用</th>
           <th width="96">权重</th>
+          <th v-if="supportsCaptcha" width="180">验证码参数</th>
           <th width="120">冷却</th>
           <th class="actions_col">操作</th>
         </tr>
@@ -230,18 +256,28 @@ const showManualImport = computed(() => pool.value === 'zcode')
               class="weight_input"
             />
           </td>
+          <td v-if="supportsCaptcha">
+            <el-input
+              v-if="drafts[acc.id]"
+              v-model="drafts[acc.id].captcha"
+              :placeholder="acc.captcha ? `已填 ${acc.captcha}` : '3007 时填写'"
+              size="small"
+              clearable
+            />
+          </td>
           <td>
             <span :class="cooldownClass(acc)" class="mono">{{ cooldownText(acc) }}</span>
           </td>
           <td class="actions_col">
             <el-button size="small" @click="saveAccount(acc)">保存</el-button>
+            <el-button v-if="supportsCaptcha && acc.captcha" size="small" @click="clearCaptcha(acc)">清验证码</el-button>
             <el-button size="small" :loading="checking[acc.id]" @click="checkCredentials(acc)">检测</el-button>
             <el-button size="small" @click="clearCooldown(acc)">清冷却</el-button>
             <el-button size="small" type="danger" plain @click="removeAccount(acc)">删除</el-button>
           </td>
         </tr>
         <tr v-if="!accounts.length">
-          <td colspan="6">
+          <td :colspan="supportsCaptcha ? 7 : 6">
             <el-empty description="暂无账号——用「登录接入」接入一个" :image-size="72" />
           </td>
         </tr>

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createLoginFlow, pollLogin, accountFromPoll, persistAccount } from '../pools/zcode/onboard.mjs';
+import { createLoginFlow, pollLogin, accountFromPoll, persistAccount, applyInterstitial } from '../pools/zcode/onboard.mjs';
 import { startStub } from './helpers/stub.mjs';
 
 const TMP = 'C:\\Users\\LXY29\\AppData\\Local\\Temp\\opencode';
@@ -88,6 +88,57 @@ test('zcode pollLogin：status pending 信封 → pending；ready → 账号字�
   assert.equal(ready.account.enabled, true);
   assert.equal(ready.account.manualWeight, 10);
   assert.equal(typeof ready.account.id, 'string');
+});
+
+test('zcode pollLogin：5xx/408/429/200 空 data → pending（不打断面板轮询）', async (t) => {
+  for (const [status, body] of [[500, '{}'], [408, '{}'], [429, '{}'], [200, '{"code":0}'], [200, '{"code":0,"data":null}']]) {
+    const stub = await startStub(t, (req, res) => {
+      res.statusCode = status;
+      res.setHeader('content-type', 'application/json');
+      res.end(body);
+    });
+    const out = await pollLogin({ origin: stub.origin, flowId: 'f', pollToken: 'pt' });
+    assert.deepEqual(out, { status: 'pending' }, `HTTP ${status} ${body} 应视为 pending`);
+  }
+});
+
+test('zcode pollLogin：status failed → 抛「授权被拒绝或已失效」', async (t) => {
+  const stub = await startStub(t, (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ code: 0, data: { status: 'failed' } }));
+  });
+  await assert.rejects(pollLogin({ origin: stub.origin, flowId: 'f', pollToken: 'pt' }), /拒绝或已失效/);
+});
+
+test('zcode applyInterstitial：改写 redirect_uri（intl）/ redirect（cn），保留其它参数', () => {
+  const url = 'https://auth.z.ai/authorize?client_id=c1&redirect_uri=https%3A%2F%2Fold%2Fcb&state=s1#frag';
+  const intl = applyInterstitial(url, 'intl', { origin: 'https://zcode.z.ai', appVersion: '3.16.3' });
+  assert.match(intl, /client_id=c1/);
+  assert.match(intl, /state=s1/);
+  assert.match(intl, /redirect_uri=https%3A%2F%2Fzcode\.z\.ai%2Fapp%2Foauth%2Flogin/);
+  assert.match(intl, /3\.16\.3/);
+  assert.doesNotMatch(intl, /old%2Fcb/);
+  assert.match(intl, /#frag$/);
+
+  const cnUrl = 'https://open.bigmodel.cn/authorize?client_id=c&redirect=x&state=s';
+  const cn = applyInterstitial(cnUrl, 'cn', { origin: 'https://zcode.z.ai', appVersion: '3.16.3' });
+  assert.match(cn, /redirect=https%3A%2F%2Fzcode\.z\.ai%2Fapp%2Foauth%2Flogin/);
+  assert.doesNotMatch(cn, /redirect_uri=/);
+
+  assert.equal(applyInterstitial('https://auth.z.ai/authorize', 'intl'), 'https://auth.z.ai/authorize', '无 query 原样返回');
+});
+
+test('zcode createLoginFlow：region cn 用 bigmodel provider，返回改写后的 authorizeUrl', async (t) => {
+  const stub = await startStub(t, (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      code: 0,
+      data: { flow_id: 'f', authorize_url: 'https://open.bigmodel.cn/a?redirect=old&x=1', poll_interval_sec: 2 },
+    }));
+  });
+  const flow = await createLoginFlow({ origin: stub.origin, region: 'cn', appVersion: '3.16.3' });
+  assert.deepEqual(JSON.parse(stub.requests[0].body), { provider: 'bigmodel' });
+  assert.match(flow.authorizeUrl, /app%2Foauth%2Flogin/);
 });
 
 test('zcode accountFromPoll：手机号形态 → realm cn', () => {

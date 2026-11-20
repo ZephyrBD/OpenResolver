@@ -15,6 +15,8 @@ export interface PoolAccount {
   manualWeight?: number | null
   cooldownUntil?: number
   cooldownKind?: string
+  /** ZCode 验证码参数（面板回显为 ***尾4位） */
+  captcha?: string
 }
 
 export interface QuotaDetailLine {
@@ -62,7 +64,11 @@ export async function fetchAccounts(pool: string): Promise<PoolAccount[]> {
   return res.accounts
 }
 
-export async function patchAccount(pool: string, id: string, body: { label?: string; enabled: boolean; manualWeight: number }): Promise<void> {
+export async function patchAccount(
+  pool: string,
+  id: string,
+  body: { label?: string; enabled: boolean; manualWeight: number; captcha?: string },
+): Promise<void> {
   await request.patch(`/api/pools/${encodeURIComponent(pool)}/accounts/${encodeURIComponent(id)}`, body)
 }
 

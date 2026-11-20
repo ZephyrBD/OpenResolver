@@ -237,7 +237,7 @@ export function createClaimer({ fetchImpl = fetch, now = Date.now, snapBase = SN
     try {
       const cred = await resolveCreds(acc);
       if (!cred) {
-        return { ok: false, status: 'failed', claimed: [], credits: 0, message: 'CodeArts 凭证不可用，请重新登录' };
+        return { ok: false, status: 'failed', claimed: [], credits: 0, message: 'CodeArts 凭证不可用，请重新登录', detail: { retryable: false } };
       }
       const result = await claimCreditCampaigns({ cred, snapBase, fetchImpl, now: now() });
       const claimed = result.items.filter((i) => i.claimed);

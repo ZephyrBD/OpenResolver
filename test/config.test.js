@@ -10,7 +10,7 @@ test('loadConfig applies the documented defaults', () => {
   assert.equal(cfg.maxAttempts, 3);
   assert.equal(cfg.openMode, true);
   assert.equal(cfg.zcodeOrigin, 'https://zcode.z.ai');
-  assert.equal(cfg.zcodeAppVersion, '3.16.3');
+  assert.equal(cfg.zcodeAppVersion, '3.18.2');
   assert.match(cfg.dataDir, /data$/);
 });
 

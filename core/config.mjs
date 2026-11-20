@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from '../pools/zcode/constants.mjs';
 
 const num = (v, fallback) => {
   const n = Number(v);
@@ -16,7 +17,7 @@ export function loadConfig(env = process.env) {
     openMode: env.UGW_OPEN_MODE !== '0',
     maxUsageFileBytes: num(env.UGW_MAX_USAGE_FILE_BYTES, 64 * 1024 * 1024),
     upstreamTimeoutMs: num(env.UGW_UPSTREAM_TIMEOUT_MS, 600_000),
-    zcodeOrigin: env.ZCODE_UPSTREAM_ORIGIN || 'https://zcode.z.ai',
-    zcodeAppVersion: env.ZCODE_APP_VERSION || '3.16.3',
+    zcodeOrigin: env.ZCODE_UPSTREAM_ORIGIN || ZCODE_ORIGIN,
+    zcodeAppVersion: env.ZCODE_APP_VERSION || ZCODE_APP_VERSION,
   };
 }

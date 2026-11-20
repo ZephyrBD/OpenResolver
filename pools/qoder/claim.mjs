@@ -30,6 +30,9 @@ export function campaignsOf(json) {
 
 export const isClaimable = (c) => c?.actionType === 'CLAIM_BENEFIT' && c?.claimStatus === 'CLAIMABLE';
 
+/** 401/403 一类是不可自助恢复的凭证问题，窗口内重试只会白打上游。 */
+const isAuthError = (e) => /^HTTP (401|403)\b/.test(String(e?.message ?? ''));
+
 export function createClaimer({
   fetchImpl = fetch,
   now = Date.now,
@@ -95,7 +98,8 @@ export function createClaimer({
         ? okResult('claimed', `已领取 ${claimed.length} 项福利`, { claimed, credits })
         : okResult('already', '福利此前已领取过', { credits, detail: { campaigns: campaigns.length } });
     } catch (e) {
-      return failResult(e?.message || '领取失败');
+      // 凭证/权限类失败当天重试没有意义；调度器据 detail.retryable 决定窗口内是否再试
+      return failResult(e?.message || '领取失败', { detail: { retryable: isAuthError(e) } });
     }
   }
 

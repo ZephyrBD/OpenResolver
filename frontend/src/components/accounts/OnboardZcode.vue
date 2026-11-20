@@ -27,11 +27,12 @@ function stopPoll(): void {
 async function pollTick(): Promise<void> {
   if (!flowId) return
   try {
-    const out = await postJson<{ pending?: boolean; account?: OnboardAccount; claim?: { status: string; claimed?: string[]; message?: string } }>(
+    const out = await postJson<{ pending?: boolean; status?: string; account?: OnboardAccount; claim?: { status: string; claimed?: string[]; message?: string } }>(
       '/api/onboard/zcode',
       { action: 'poll', flowId },
     )
-    if (out.pending) {
+    // 后端返回 {status:'pending'|'ready', ...}，pending 也可能是 {pending:true}（trae/workbuddy 风格），两者都要继续轮询
+    if (out.pending || (out.status && out.status !== 'ready')) {
       pollTimer = setTimeout(pollTick, 2000)
       return
     }
