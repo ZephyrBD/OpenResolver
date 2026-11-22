@@ -352,6 +352,10 @@ export function createPanelGateway({
       return sendJson(res, 200, overview());
     }
     if (url.pathname === '/api/pools' && req.method === 'GET') {
+      // 额度列回源：peek 只读缓存，没流量/没点过检测就永远是旧值；get 走 TTL+单飞+退避，不会打爆上游
+      await Promise.allSettled(
+        pools.flatMap((p) => (p.accounts || []).map((acc) => (typeof p.quota?.get === 'function' ? p.quota.get(acc) : null))),
+      );
       return sendJson(res, 200, {
         pools: pools.map((p) => ({
           name: p.name,

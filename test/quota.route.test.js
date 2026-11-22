@@ -309,8 +309,28 @@ test('panel 前端：账号页挂载即触发 quota 查询、claim 领取后联�
   const quotaSrc = fs.readFileSync(path.join(frontend, 'components', 'accounts', 'QuotaDetails.vue'), 'utf8');
   assert.match(quotaSrc, /autoRefresh/, 'QuotaDetails 支持挂载即自动查询');
   assert.match(quotaSrc, /defineExpose\(\{ refresh \}\)/, '查询封装成 refresh 供外部联动');
+  assert.match(quotaSrc, /watch\(/, 'pool 变化时重新拉取（切池不显示旧明细）');
 
   const claimSrc = fs.readFileSync(path.join(frontend, 'components', 'accounts', 'ClaimPanel.vue'), 'utf8');
   assert.match(claimSrc, /onSuccess/, 'claim 领取动作后联动刷新额度明细');
   assert.match(claimSrc, /tried/, '领取结果展示候选摘要（tried）');
+});
+
+// GET /api/pools 也要触发额度回源（peek 只读缓存，没流量就永远是旧值）
+test('quota 路由：GET /api/pools 触发各账号额度回源', async (t) => {
+  const dataDir = tmpDataDir(t);
+  const { pool } = makeQuotaPool(dataDir, {});
+  let gets = 0;
+  const orig = pool.quota.get;
+  pool.quota.get = async (acc) => {
+    gets++;
+    return orig(acc);
+  };
+  const { base } = await startPanel(t, { dataDir, pools: [pool], withKey: false });
+  const { cookies } = await login(base);
+  const res = await panelFetch(base, '/api/pools', { cookies });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.pools.length, 1);
+  assert.equal(gets, 2, '两个账号（含禁用的）都回源一次');
 });

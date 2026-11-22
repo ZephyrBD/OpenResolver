@@ -286,6 +286,7 @@ const showManualImport = computed(() => pool.value === 'zcode')
 
     <QuotaDetails
       v-if="accounts.length"
+      :key="pool"
       ref="quotaRef"
       :pool="pool"
       auto-refresh

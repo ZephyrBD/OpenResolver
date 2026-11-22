@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { fetchQuota, type PoolName, type QuotaEntry } from '@/api/accounts'
 import { fmtTime, fmtTokens } from '@/utils/fmt'
 import HandProgress from '@/components/data/HandProgress.vue'
@@ -54,6 +54,14 @@ const rows = computed(() =>
 onMounted(() => {
   if (props.autoRefresh) void refresh()
 })
+
+// 父组件切池复用本实例（无 key），pool 变化必须重新拉取，否则一直显示旧池明细
+watch(
+  () => props.pool,
+  () => {
+    if (props.autoRefresh) void refresh()
+  },
+)
 
 defineExpose({ refresh })
 defineOptions({ name: 'QuotaDetails' })

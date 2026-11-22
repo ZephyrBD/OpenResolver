@@ -13,6 +13,7 @@ import {
   anthropicEventsToOpenaiChunks,
 } from '../adapters/openai-to-anthropic.mjs';
 import { createSseParser } from '../adapters/sse-reader.mjs';
+import { saveKeys } from '../auth/store.mjs';
 import { createUsageRecorder } from '../panel/usage.mjs';
 
 const EMPTY_DB = { version: 1, keys: [] };
@@ -65,6 +66,37 @@ function usageOfJson(text) {
   };
 }
 
+/** 从 Anthropic SSE 文本提取 usage：message_start 给 input，message_delta 带累计 output。 */
+function usageOfSse(text) {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    let payload;
+    try {
+      payload = JSON.parse(line.slice(5).trim());
+    } catch {
+      continue;
+    }
+    if (payload?.type === 'message_start' && payload.message?.usage) {
+      inputTokens = payload.message.usage.input_tokens ?? inputTokens;
+      cacheReadTokens = payload.message.usage.cache_read_input_tokens ?? cacheReadTokens;
+    }
+    if (payload?.type === 'message_delta' && payload.usage?.output_tokens) {
+      outputTokens = payload.usage.output_tokens;
+    }
+  }
+  return { inputTokens, outputTokens, cacheReadTokens };
+}
+
+/** 非流式取 JSON usage；流式是 SSE 文本（JSON.parse 必失败）退回逐帧解析。 */
+function usageOfResponse(text) {
+  const fromJson = usageOfJson(text);
+  if (fromJson.inputTokens || fromJson.outputTokens) return fromJson;
+  return usageOfSse(text);
+}
+
 function toGatewayModel(pool, model) {
   return {
     id: `${pool.name}/${model.id}`,
@@ -95,6 +127,25 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
       dataDir: config.dataDir ? path.resolve(config.dataDir) : null,
       maxFileBytes: config.maxUsageFileBytes,
     });
+
+  // 密钥 token 配额（§12）：authorize 只查 usedTokens，这里在记用量时累加并节流落盘
+  const keysFile = config.dataDir ? path.join(path.resolve(config.dataDir), 'keys.json') : null;
+  const keysFlushMs = config.keyUsageFlushMs ?? 5_000;
+  let keysFlushTimer = null;
+  function bumpKeyUsage(key, inputTokens, outputTokens) {
+    if (!key) return;
+    key.usedTokens = (key.usedTokens || 0) + (inputTokens || 0) + (outputTokens || 0);
+    if (!keysFile || keysFlushTimer) return;
+    keysFlushTimer = setTimeout(() => {
+      keysFlushTimer = null;
+      try {
+        saveKeys(keysFile, db);
+      } catch {
+        // 尽力而为：落盘失败不拖累推理，下次请求会重试
+      }
+    }, keysFlushMs);
+    if (keysFlushTimer.unref) keysFlushTimer.unref();
+  }
 
   const handleModels = (req, res) => {
     const key = authorize({
@@ -165,14 +216,16 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
     const startedAt = Date.now();
     if (usageRecorder.active) {
       tapResponse(res, (text) => {
+        const tokens = usageOfResponse(text);
         usageRecorder.record({
           pool: poolName,
           model,
           keyId: key?.id ?? null,
           status: res.statusCode,
           durationMs: Date.now() - startedAt,
-          ...usageOfJson(text),
+          ...tokens,
         });
+        bumpKeyUsage(key, tokens.inputTokens, tokens.outputTokens);
       });
     }
 
@@ -220,14 +273,16 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
     const startedAt = Date.now();
     if (usageRecorder.active && !wantsStream) {
       tapResponse(res, (text) => {
+        const tokens = usageOfResponse(text);
         usageRecorder.record({
           pool: poolName,
           model: requestedModel,
           keyId: key?.id ?? null,
           status: res.statusCode,
           durationMs: Date.now() - startedAt,
-          ...usageOfJson(text),
+          ...tokens,
         });
+        bumpKeyUsage(key, tokens.inputTokens, tokens.outputTokens);
       });
     }
     const converted = { ...chatCompletionsToMessages(body), model };
@@ -253,16 +308,20 @@ export function createGateway({ config = {}, pools = [], db = EMPTY_DB, panel = 
       res.write('data: [DONE]\n\n');
       res.end();
       if (usageRecorder.active) {
+        const streamTokens = {
+          inputTokens: usage?.prompt_tokens ?? 0,
+          outputTokens: usage?.completion_tokens ?? 0,
+          cacheReadTokens: 0,
+        };
         usageRecorder.record({
           pool: poolName,
           model: requestedModel,
           keyId: key?.id ?? null,
           status: res.statusCode,
           durationMs: Date.now() - startedAt,
-          inputTokens: usage?.prompt_tokens ?? 0,
-          outputTokens: usage?.completion_tokens ?? 0,
-          cacheReadTokens: 0,
+          ...streamTokens,
         });
+        bumpKeyUsage(key, streamTokens.inputTokens, streamTokens.outputTokens);
       }
       return;
     }

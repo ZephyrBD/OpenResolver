@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchModels, fetchOverview, fetchPools, fetchStats } from '@/api/dashboard'
 import type { GatewayModel } from '@/types/models'
 import AppSelect from '@/components/common/AppSelect.vue'
@@ -57,7 +57,10 @@ async function load(): Promise<void> {
   }
 }
 
+// 停在页面上也要跟着用量增长：30s 轮询刷新今日 tokens / 各池额度 / 趋势
 onMounted(load)
+const pollTimer = setInterval(load, 30_000)
+onBeforeUnmount(() => clearInterval(pollTimer))
 
 const poolOptions = computed(() => [...new Set(models.value.map((m) => m.pool))])
 const filteredModels = computed(() =>

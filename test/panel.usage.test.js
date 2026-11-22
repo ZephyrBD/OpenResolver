@@ -33,8 +33,9 @@ function ssePool() {
     models: () => [{ id: 'GLM' }],
     send({ res }) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":9}}}\n\n');
+      res.write('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":9,"cache_read_input_tokens":3}}}\n\n');
       res.write('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"嗨"}}\n\n');
+      res.write('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":4}}\n\n');
       res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
       res.end();
     },
@@ -89,7 +90,7 @@ test('panel.usage: 非流式 /v1/messages 成功 → jsonl 一行、token 数正
   assert.equal(typeof entry.durationMs, 'number');
 });
 
-test('panel.usage: 流式记录不破坏 SSE（token 填 0）', async (t) => {
+test('panel.usage: 流式记录不破坏 SSE（usage 从事件帧提取）', async (t) => {
   const dataDir = tmpDataDir(t);
   const { base, secret } = await startUsageGateway(t, { pool: ssePool(), dataDir, config: { dataDir } });
 
@@ -100,14 +101,15 @@ test('panel.usage: 流式记录不破坏 SSE（token 填 0）', async (t) => {
   });
   assert.equal(res.headers.get('content-type'), 'text/event-stream');
   const text = await res.text();
-  assert.equal(text.split('\n\n').filter(Boolean).length, 3, 'SSE 事件完整');
+  assert.equal(text.split('\n\n').filter(Boolean).length, 4, 'SSE 事件完整');
   await new Promise((r) => setTimeout(r, 50));
 
   const file = path.join(dataDir, 'usage', `${usageDate(now())}.jsonl`);
   const entry = JSON.parse(fs.readFileSync(file, 'utf8').trim());
   assert.equal(entry.status, 200);
-  assert.equal(entry.inputTokens, 0);
-  assert.equal(entry.outputTokens, 0);
+  assert.equal(entry.inputTokens, 9);
+  assert.equal(entry.outputTokens, 4);
+  assert.equal(entry.cacheReadTokens, 3);
 });
 
 test('panel.usage: 按天分片文件名', async (t) => {
@@ -176,4 +178,29 @@ test('panel.usage: 写入失败不影响推理响应状态', async (t) => {
   const body = await res.json();
   assert.equal(body.type, 'message');
   assert.equal(usage.today().requests, 0);
+});
+
+test('panel.usage: 请求后累计 key.usedTokens 并节流落盘', async (t) => {
+  const dataDir = tmpDataDir(t);
+  const { db, full, key } = seedDb({ name: 'quota', tokenQuota: 1000 });
+  const usage = createUsageRecorder({ dataDir, now });
+  const server = createGateway({
+    config: { version: '0.1.0', dataDir, keyUsageFlushMs: 30 },
+    pools: [usagePool()],
+    db,
+    usage,
+  });
+  const port = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
+  t.after(() => new Promise((r) => server.close(r)));
+  const base = `http://127.0.0.1:${port}`;
+
+  await post(base, full, { model: 'zcode/GLM', messages: [{ role: 'user', content: 'a' }] });
+  await post(base, full, { model: 'zcode/GLM', messages: [{ role: 'user', content: 'b' }] });
+  assert.equal(key.usedTokens, 2 * (12 + 34)); // 内存立即生效，配额在下一请求就受控
+
+  await new Promise((r) => setTimeout(r, 120)); // 等 30ms 节流落盘
+  const persisted = JSON.parse(fs.readFileSync(path.join(dataDir, 'keys.json'), 'utf8'));
+  assert.equal(persisted.keys[0].usedTokens, 2 * (12 + 34));
 });
