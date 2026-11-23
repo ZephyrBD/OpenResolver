@@ -47,6 +47,7 @@ const GROUPS: Array<{ title: string; fields: FieldSpec[] }> = [
       { key: 'autoClaimStartHour', label: '补领窗口起点', unit: '点', factor: 0 },
       { key: 'autoClaimEndHour', label: '补领窗口终点（24 = 当天末）', unit: '点', factor: 0 },
       { key: 'weekendGrabEnabled', label: 'ZCode 周末活动包抢领', unit: '', factor: 0 },
+      { key: 'resetDeviceOnClaim', label: 'ZCode 领取成功后换设备指纹', unit: '', factor: 0 },
     ],
   },
   {
@@ -59,7 +60,7 @@ const GROUPS: Array<{ title: string; fields: FieldSpec[] }> = [
   },
 ]
 
-const BOOLEAN_KEYS = new Set(['autoClaimEnabled', 'weekendGrabEnabled'])
+const BOOLEAN_KEYS = new Set(['autoClaimEnabled', 'weekendGrabEnabled', 'resetDeviceOnClaim'])
 
 const loading = ref(true)
 const errText = ref('')

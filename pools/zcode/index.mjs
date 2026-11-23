@@ -1,12 +1,13 @@
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { HttpError } from '../../http/errors.mjs';
-import { deviceIdFor, sessionIdFor } from '../../core/fingerprint.mjs';
+import { deviceIdFor, sessionIdFor, randomDeviceId } from '../../core/fingerprint.mjs';
 import { createPoolScheduler, sessionKeyOf } from '../base.mjs';
 import { DEFAULT_SETTINGS } from '../settings.mjs';
 import { sseBodyChannel } from '../event-channel.mjs';
 import { buildUpstreamBody } from './upstream.mjs';
 import { createQuotaCache } from './quota.mjs';
+import { loadAccounts, saveAccounts } from './accounts.mjs';
 import { ZCODE_ORIGIN, ZCODE_APP_VERSION } from './constants.mjs';
 import { pickAttemptAccount, unavailableError, finishAnthropicResponse, writeAnthropicError, tokenPatchPersister } from '../dispatch-helpers.mjs';
 
@@ -102,6 +103,7 @@ export function createZcodePool({
   accounts = [],
   profile,
   config = {},
+  accountsDir = '',
   fetchImpl = fetch,
   rng = Math.random,
   now = Date.now,
@@ -132,6 +134,22 @@ export function createZcodePool({
 
   const state = scheduler.accounts;
   const maxAttempts = Math.max(1, config.maxAttempts ?? scheduler.settings.maxAttempts);
+
+  /**
+   * 换设备身份：生成随机 deviceId，写进调度器里的账号对象，并把**调度器那批数组**落盘。
+   *
+   * 落盘必须用 state 而不是闭包外传入的 accounts：两者是不同数组（createPoolScheduler 里
+   * 做过 map 复制），写错对象会把旧 deviceId 覆盖回去，表现为「重置永远不生效」且无任何报错。
+   */
+  function resetDeviceId(acc) {
+    if (!acc?.id) return '';
+    const next = randomDeviceId();
+    acc.deviceId = next;
+    const stored = state.find((a) => a.id === acc.id);
+    if (stored && stored !== acc) stored.deviceId = next;
+    if (accountsDir) saveAccounts(accountsDir, state);
+    return next;
+  }
 
   const unavailable = (cause) => unavailableError(scheduler, 'ZCode', cause);
 
@@ -249,6 +267,7 @@ export function createZcodePool({
     type: 'pool',
     accounts: state,
     scheduler,
+    resetDeviceId,
     models: () =>
       (config.models || [
         {

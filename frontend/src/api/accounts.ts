@@ -17,6 +17,8 @@ export interface PoolAccount {
   cooldownKind?: string
   /** ZCode 验证码参数（面板回显为 ***尾4位） */
   captcha?: string
+  /** ZCode 设备标识（面板回显为 ***尾12位） */
+  deviceId?: string
 }
 
 export interface QuotaDetailLine {
@@ -74,6 +76,14 @@ export async function patchAccount(
 
 export async function resetAccount(pool: string, id: string): Promise<void> {
   await postJson(`/api/pools/${encodeURIComponent(pool)}/accounts/${encodeURIComponent(id)}/reset`)
+}
+
+/** 换一台设备身份：上游按设备发放「首次资格」，同一 device-mid 领过就不再下发。 */
+export async function resetAccountDevice(pool: string, id: string): Promise<string> {
+  const res = await postJson<{ deviceId: string }>(
+    `/api/pools/${encodeURIComponent(pool)}/accounts/${encodeURIComponent(id)}/reset-device`,
+  )
+  return res.deviceId
 }
 
 export async function deleteAccount(pool: string, id: string): Promise<void> {

@@ -21,6 +21,19 @@ export function deviceIdFor(uid) {
   return deriveId(uid, 'machine');
 }
 
+/**
+ * 全新的设备标识：用于「领取成功后重置」，让账号以一台上游未见过的设备身份出现。
+ *
+ * 与 deviceIdFor 的确定性派生不同，这是随机值且不可重现——因为语义就是「换一台机器」。
+ * 仍按 UUIDv4 形态修补（第 13 位 4、第 17 位 a）：上游可能校验该形态，纯 hex 会被拒。
+ * 调用方必须把结果持久化到账号的 deviceId，否则进程重启后 deviceIdFor 会算回旧值。
+ */
+export function randomDeviceId() {
+  const h = crypto.randomUUID().replace(/-/g, '');
+  const patched = `${h.slice(0, 12)}4${h.slice(13, 16)}a${h.slice(17)}`;
+  return `${patched.slice(0, 8)}-${patched.slice(8, 12)}-${patched.slice(12, 16)}-${patched.slice(16, 20)}-${patched.slice(20, 32)}`;
+}
+
 /** 每账号一个稳定的「客户端实例」 */
 export function sessionIdFor(uid) {
   return `session_${crypto.createHash('sha256').update(`session:${uid}`).digest('hex').slice(0, 32)}`;

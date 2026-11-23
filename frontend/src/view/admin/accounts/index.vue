@@ -8,6 +8,7 @@ import {
   patchAccount,
   refreshPoolModels,
   resetAccount,
+  resetAccountDevice,
   type OnboardAccount,
   type PoolAccount,
   type PoolName,
@@ -131,6 +132,22 @@ async function clearCaptcha(acc: PoolAccount): Promise<void> {
     toast(`账号 ${displayWithId(accountName(acc), acc.id)} 验证码参数已清除`, 'success')
   } catch (err) {
     errText.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+const resetDev = ref<Record<string, boolean>>({})
+
+async function resetDevice(acc: PoolAccount): Promise<void> {
+  errText.value = ''
+  resetDev.value[acc.id] = true
+  try {
+    const next = await resetAccountDevice(pool.value, acc.id)
+    await reload()
+    toast(`账号 ${displayWithId(accountName(acc), acc.id)} 设备指纹已重置为 ***${next.slice(-12)}`, 'success')
+  } catch (err) {
+    errText.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    resetDev.value[acc.id] = false
   }
 }
 
@@ -271,6 +288,7 @@ const showManualImport = computed(() => pool.value === 'zcode')
           <td class="actions_col">
             <el-button size="small" @click="saveAccount(acc)">保存</el-button>
             <el-button v-if="supportsCaptcha && acc.captcha" size="small" @click="clearCaptcha(acc)">清验证码</el-button>
+            <el-button v-if="supportsCaptcha" size="small" :loading="resetDev[acc.id]" @click="resetDevice(acc)">换设备</el-button>
             <el-button size="small" :loading="checking[acc.id]" @click="checkCredentials(acc)">检测</el-button>
             <el-button size="small" @click="clearCooldown(acc)">清冷却</el-button>
             <el-button size="small" type="danger" plain @click="removeAccount(acc)">删除</el-button>

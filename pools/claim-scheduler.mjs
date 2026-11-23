@@ -116,7 +116,7 @@ export function createClaimScheduler({
     };
   }
 
-  async function claimAccount(pool, claimer, acc) {
+  async function claimAccount(pool, claimer, acc, { resetDeviceOnClaim = 1 } = {}) {
     if (acc.enabled === false || acc.state === 'needs_login') return null;
     let result;
     try {
@@ -124,20 +124,31 @@ export function createClaimScheduler({
     } catch (err) {
       result = { ok: false, status: 'failed', claimed: [], credits: 0, message: err?.message || String(err) };
     }
+    // 领取成功后换一台设备身份：上游按设备发放「首次资格」，同一 device-mid 领过就不再下发。
+    // 只认 claimed：none（无活动）与 already（已领过）都不该换，否则一天会密集换 32 次身份。
+    if (resetDeviceOnClaim && result?.status === 'claimed' && pool?.resetDeviceId) {
+      try {
+        pool.resetDeviceId(acc);
+      } catch (err) {
+        log(`[auto-claim] ${acc.id} 重置设备指纹失败：${err?.message || err}`);
+      }
+    }
     // 领取可能改变了额度/签到：清该账号 quota 缓存，额度明细下次 get 立刻回源
     pool?.quota?.invalidate?.(acc);
     return { result, entry: toEntry(pool, acc, result) };
   }
 
   /** 全量一轮：所有池 × 所有账号；skip 决定哪些账号本轮跳过（返回 reason 表示跳过）。 */
-  async function runAll({ skip } = {}) {
+  async function runAll({ skip, resetDeviceOnClaim } = {}) {
+    // 开关只在未显式传参时从设置文件读：runAll 是公开方法，直接调用也必须尊重设置项。
+    const resetDevice = resetDeviceOnClaim ?? loadSettings({ file: settingsFile, env: {} }).resetDeviceOnClaim;
     const entries = [];
     for (const pool of pools) {
       const claimer = claimers[pool.name];
       if (!claimer) continue;
       for (const acc of pool.accounts ?? []) {
         if (skip && skip(pool, acc)) continue;
-        const out = await claimAccount(pool, claimer, acc);
+        const out = await claimAccount(pool, claimer, acc, { resetDeviceOnClaim: resetDevice });
         if (!out) continue;
         entries.push(out.entry);
         if (skip?._record) skip._record(pool, acc, out.result);
@@ -150,13 +161,14 @@ export function createClaimScheduler({
   }
 
   /** 周末抢领：只跑 zcode，不受当天成功状态限制。 */
-  async function weekendGrab() {
+  async function weekendGrab({ resetDeviceOnClaim } = {}) {
+    const resetDevice = resetDeviceOnClaim ?? loadSettings({ file: settingsFile, env: {} }).resetDeviceOnClaim;
     const claimer = claimers.zcode;
     const pool = pools.find((p) => p.name === 'zcode');
     if (!claimer || !pool) return;
     const entries = [];
     for (const acc of pool.accounts ?? []) {
-      const out = await claimAccount(pool, claimer, acc);
+      const out = await claimAccount(pool, claimer, acc, { resetDeviceOnClaim: resetDevice });
       if (out) entries.push(out.entry);
     }
     if (entries.length) appendLog(entries);
@@ -188,14 +200,14 @@ export function createClaimScheduler({
             return now() - (prev.lastAt ?? 0) < retryGapMs; // 间隔未到
           };
           skip._record = record;
-          await runAll({ skip });
+          await runAll({ skip, resetDeviceOnClaim: settings.resetDeviceOnClaim });
           dirty = true;
         }
 
         if (settings.weekendGrabEnabled && inWeekendWindow(bj) && now() - (state.lastWeekendGrabAt ?? 0) > WEEKEND_GRAB_GAP_MS) {
           state.lastWeekendGrabAt = now();
           dirty = true;
-          await weekendGrab();
+          await weekendGrab({ resetDeviceOnClaim: settings.resetDeviceOnClaim });
         }
 
         if (dirty) saveState(state);

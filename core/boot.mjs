@@ -58,6 +58,7 @@ export function boot({ env = process.env, log = console.log } = {}) {
   const zcode = createZcodePool({
     accounts: zcodeAccounts,
     profile: loadProfile(),
+    accountsDir: zcodeDir,
     config: {
       origin: config.zcodeOrigin,
       appVersion: config.zcodeAppVersion,

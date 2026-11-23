@@ -190,6 +190,13 @@ export function createPanelGateway({
       });
     }
 
+    if (action === 'reset-device' && req.method === 'POST') {
+      // 换一台上游未见过的设备身份：上游按设备发放「首次资格」，同一 device-mid 领过就不再下发。
+      if (!pool.resetDeviceId) throw new HttpError(501, `池 ${pool.name} 不支持重置设备指纹`, { type: 'api_error' });
+      const next = pool.resetDeviceId(acc);
+      return sendJson(res, 200, { account: accountView(pool.accounts.find((a) => a.id === id)), deviceId: next });
+    }
+
     if (req.method === 'PATCH' && !action) {
       const body = await readJson(req, config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES);
       const unknown = Object.keys(body).filter((k) => !ACCOUNT_PATCH_FIELDS.includes(k));
@@ -401,6 +408,9 @@ export function createPanelGateway({
 
     m = url.pathname.match(/^\/api\/pools\/([^/]+)\/accounts\/([^/]+)\/check$/);
     if (m) return handleAccountById(req, res, poolByName(pools, safeDecode(m[1])), safeDecode(m[2]), 'check');
+
+    m = url.pathname.match(/^\/api\/pools\/([^/]+)\/accounts\/([^/]+)\/reset-device$/);
+    if (m) return handleAccountById(req, res, poolByName(pools, safeDecode(m[1])), safeDecode(m[2]), 'reset-device');
 
     // 每账号额度明细：现场回源（缓存 TTL 在各池 quota 模块内），单账号失败不拖垮整批。
     // 签到列以 claimer.status（领取真实链路）覆盖 quota 自带的签到查询，见 claimerCheckin。

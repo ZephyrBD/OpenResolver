@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   autoClaimStartHour: 19, // 每日签到窗口起点（北京时间 0-23）
   autoClaimEndHour: 24, // 窗口终点（不含）；24 = 当天末 23:59
   weekendGrabEnabled: 1, // ZCode 周末活动包抢领（0/1）
+  resetDeviceOnClaim: 1, // ZCode 领取成功后重置设备指纹（0/1）：上游按设备发放首次资格
   wbCreditTokensRate: 1.265, // WB credits→tokens：按 glm-5.2 倍率 x0.79 的倒数
   qoderCreditTokensRate: 1, // Qoder credit→tokens：默认 1:1
   codeartsCreditTokensRate: 1, // CodeArts credits→tokens：默认 1:1
@@ -29,7 +30,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
 /** 整数字段至少为 1；时长字段允许 0（= 不冷却）。 */
 const MIN_ONE = new Set(['maxInFlight', 'topN', 'maxAttempts', 'breakerThreshold', 'breakerCooldownMs', 'breakerCapMs', 'quotaExhaustedCooldownMs']);
-const BOOLEAN_KEYS = new Set(['autoClaimEnabled', 'weekendGrabEnabled']);
+const BOOLEAN_KEYS = new Set(['autoClaimEnabled', 'weekendGrabEnabled', 'resetDeviceOnClaim']);
 /** 浮点比率字段，下限 0.0001（0 表示"永远无余额"没有意义，极端场景一律地板值）。 */
 const FLOAT_MIN = new Set(['wbCreditTokensRate', 'qoderCreditTokensRate', 'codeartsCreditTokensRate']);
 const HOUR_MIN = 0;
@@ -53,6 +54,7 @@ const ENV_KEYS = {
   autoClaimStartHour: 'UGW_AUTO_CLAIM_START_HOUR',
   autoClaimEndHour: 'UGW_AUTO_CLAIM_END_HOUR',
   weekendGrabEnabled: 'UGW_WEEKEND_GRAB',
+  resetDeviceOnClaim: 'UGW_RESET_DEVICE_ON_CLAIM',
   wbCreditTokensRate: 'UGW_WB_CREDIT_TOKENS_RATE',
   qoderCreditTokensRate: 'UGW_QODER_CREDIT_TOKENS_RATE',
   codeartsCreditTokensRate: 'UGW_CODEARTS_CREDIT_TOKENS_RATE',

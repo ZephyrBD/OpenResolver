@@ -15,7 +15,7 @@ const SECURITY_HEADERS = {
 
 const FLOW_TTL_MS = 10 * 60_000;
 const SENSITIVE_FIELDS = ['jwt', 'refreshToken', 'pat', 'jobToken', 'jobRefreshToken'];
-const ACCOUNT_PATCH_FIELDS = ['label', 'manualWeight', 'enabled', 'captcha'];
+const ACCOUNT_PATCH_FIELDS = ['label', 'manualWeight', 'enabled', 'captcha', 'deviceId'];
 
 function clampManual(v) {
   const n = Number(v);
@@ -71,7 +71,7 @@ export function accountView(acc) {
     uid: acc.uid ?? '',
     nickname: acc.nickname ?? '',
     machineID: acc.machineID ?? acc.machineId ?? '',
-    deviceId: acc.deviceId ?? '',
+    deviceId: acc.deviceId ? `***${String(acc.deviceId).slice(-12)}` : '',
     expiresAt: acc.expiresAt ?? 0,
     jobTokenExpiresAt: acc.jobTokenExpiresAt ?? 0,
     createdAt: acc.createdAt ?? 0,

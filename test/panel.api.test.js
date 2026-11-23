@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startStub } from './helpers/stub.mjs';
 import { tmpDataDir, startPanel, makePool, login, panelFetch } from './helpers/panel.mjs';
-import { loadAccounts } from '../pools/zcode/accounts.mjs';
+import { loadAccounts, saveAccounts } from '../pools/zcode/accounts.mjs';
+import { randomDeviceId } from '../core/fingerprint.mjs';
 
 const PAT = 'pt-abcdef1234567890';
 const JWT = 'eyJhbGciOi.eyJzdWIi.jwT-签名部分很长很长';
@@ -93,6 +94,13 @@ test('panel.api: accounts 列表脱敏——响应里 grep 不到完整 pat/jwt'
 test('panel.api: 新增/编辑/清冷却/删除账号全链路（含磁盘断言）', async (t) => {
   const dataDir = tmpDataDir(t);
   const pool = makePool('zcode', { dataDir });
+  // 真池的 resetDeviceId 会换新指纹并落盘；桩这里给等价实现，逻辑行为一致
+  pool.resetDeviceId = (acc) => {
+    const next = randomDeviceId();
+    acc.deviceId = next;
+    saveAccounts(path.join(dataDir, 'pools', 'zcode'), pool.accounts.map((a) => ({ ...a })));
+    return next;
+  };
   const { base } = await startPanel(t, { dataDir, pools: [pool] });
   const { cookies } = await login(base);
   const disk = () => loadAccounts(path.join(dataDir, 'pools', 'zcode'));
@@ -140,6 +148,16 @@ test('panel.api: 新增/编辑/清冷却/删除账号全链路（含磁盘断言
   assert.equal(capView.captcha, '***9f3c', '回显只给尾 4 位');
   assert.equal(disk()[0].captcha, 'AliyunCaptcha-verify-param-9f3c', '磁盘保存完整值');
   assert.equal(pool.accounts[0].captcha, 'AliyunCaptcha-verify-param-9f3c', '运行态立即生效');
+
+  // 重置设备指纹：换新值、落盘、回显打码
+  const beforeDevice = disk()[0].deviceId;
+  const devReset = await panelFetch(base, `/api/pools/zcode/accounts/${added.id}/reset-device`, { method: 'POST', cookies });
+  assert.equal(devReset.status, 200);
+  const devBody = await devReset.json();
+  assert.match(devBody.deviceId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/, '新值保持 UUIDv4 形态');
+  assert.notEqual(devBody.deviceId, beforeDevice, '必须换掉旧值');
+  assert.equal(disk()[0].deviceId, devBody.deviceId, '磁盘必须跟着改');
+  assert.ok(devBody.account.deviceId.startsWith('***'), '回显必须打码');
 
   // 清冷却
   pool.scheduler.updateAccount(added.id, { cooldownUntil: Date.now() + 3_600_000, cooldownKind: 'rate_limit', consecutiveFails: 2 });

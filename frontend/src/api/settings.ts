@@ -17,6 +17,7 @@ export interface PoolSettings {
   autoClaimStartHour: number
   autoClaimEndHour: number
   weekendGrabEnabled: number
+  resetDeviceOnClaim: number
   wbCreditTokensRate: number
   qoderCreditTokensRate: number
   codeartsCreditTokensRate: number
