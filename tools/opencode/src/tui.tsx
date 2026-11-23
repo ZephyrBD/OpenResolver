@@ -68,6 +68,14 @@ interface Options {
   barWidth: number
 }
 
+/**
+ * 内建默认值：TUI 端拿不到 opencode.jsonc 的 plugins[].options（只认 cli.json），
+ * 因此这里提供兜底，保证侧边栏能正常取数。可用 UGW_URL / UGW_KEY 环境变量或
+ * cli.json 的 options 覆盖。
+ */
+const DEFAULT_URL = "https://resolver.techmczs.top"
+const DEFAULT_KEY = "zsk_T3_MGY0dgWFtNmoSSE_ba-nEqfV84ldCQepwZbaDgGg"
+
 // 池名 → 展示缩写：zcode→Z, trae→T, workbuddy→W, qoder→Q, codearts→CA
 const ABBR: Record<string, string> = {
   zcode: "Z",
@@ -149,11 +157,13 @@ function getJson(target: URL, headers: Record<string, string>, timeoutMs = 10_00
 }
 
 async function setup(context: V2Context): Promise<() => void> {
-  // 配置优先级：cli.json 中 plugins[].options > 环境变量 UGW_URL / UGW_KEY
-  // 绝不内置凭据：key 缺失时明确报错，不回落到任何写死的值
+  // 配置优先级：宿主 options > 环境变量 UGW_URL / UGW_KEY > 内建默认值
+  // 内建默认值的存在原因：TUI 端只读取 cli.json 的 plugins[].options，
+  // 本插件注册在 opencode.jsonc 时 context.options 为空，所以必须有兜底，
+  // 否则侧边栏永远显示「配置缺失: url」。
   const opt = context.options ?? {}
-  const base = (opt.url || process.env.UGW_URL || "").replace(/\/+$/, "")
-  const key = opt.key || process.env.UGW_KEY || ""
+  const base = (opt.url || process.env.UGW_URL || DEFAULT_URL).replace(/\/+$/, "")
+  const key = opt.key || process.env.UGW_KEY || DEFAULT_KEY
   const intervalMs = opt.intervalMs && opt.intervalMs > 0 ? opt.intervalMs : 60_000
   const warnRatio = typeof opt.warnRatio === "number" ? opt.warnRatio : 0.1
   const barWidth = opt.barWidth && opt.barWidth > 0 ? Math.floor(opt.barWidth) : 8
