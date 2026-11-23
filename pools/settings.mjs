@@ -93,28 +93,6 @@ function readFileSettings(file) {
   }
 }
 
-/** 旧 autoClaimHour（单整点）→ [hour, hour+1)；新键存在时优先新键。 */
-const LEGACY_HOUR_KEY = 'autoClaimHour';
-const LEGACY_HOUR_ENV = 'UGW_AUTO_CLAIM_HOUR';
-
-/**
- * 把旧单整点设置映射到窗口，仅在未显式给出新键的场合生效。
- * 返回 { start, end } 或 null。env 与 file 都看，env 优先。
- */
-function legacyWindow(env, fromFile) {
-  const hasNewEnv = env?.UGW_AUTO_CLAIM_START_HOUR !== undefined && env?.UGW_AUTO_CLAIM_START_HOUR !== '';
-  const hasNewFile = fromFile && ('autoClaimStartHour' in fromFile || 'autoClaimEndHour' in fromFile);
-  if (hasNewEnv || hasNewFile) return null;
-
-  const candidates = [env?.[LEGACY_HOUR_ENV], fromFile?.[LEGACY_HOUR_KEY]];
-  for (const raw of candidates) {
-    if (raw === undefined || raw === null || raw === '') continue;
-    const hour = clampSetting('autoClaimStartHour', raw);
-    if (hour !== undefined) return { start: hour, end: Math.min(WINDOW_END_MAX, hour + 1) };
-  }
-  return null;
-}
-
 /** 窗口合法性：终点必须大于起点；不合法时退化为起点 + 1 小时。 */
 function normalizeWindow(settings) {
   if (settings.autoClaimEndHour <= settings.autoClaimStartHour) {
@@ -136,11 +114,6 @@ export function loadSettings({ file, env = process.env } = {}) {
       const clamped = clampSetting(key, fromFile[key]);
       if (clamped !== undefined) settings[key] = clamped;
     }
-  }
-  const legacy = legacyWindow(env, fromFile);
-  if (legacy) {
-    settings.autoClaimStartHour = legacy.start;
-    settings.autoClaimEndHour = legacy.end;
   }
   return normalizeWindow(settings);
 }

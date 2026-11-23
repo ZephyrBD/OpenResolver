@@ -1,5 +1,5 @@
 // 签到窗口设置：autoClaimStartHour / autoClaimEndHour（默认 19 / 24，24 = 当天末）。
-// 旧 autoClaimHour 仍可读，映射为 [hour, hour+1)。
+// 旧 autoClaimHour 已被忽略：它的默认值 9 从来不是用户的真实意图。
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,22 +28,22 @@ test('环境变量可覆盖窗口起止', () => {
   assert.equal(settings.autoClaimEndHour, 23);
 });
 
-test('旧 autoClaimHour 仍被读取，映射为 [hour, hour+1)', () => {
+test('旧 autoClaimHour 被忽略，落回默认 19–24', () => {
   const { file } = tmpFile();
   fs.writeFileSync(file, JSON.stringify({ autoClaimHour: 20 }));
   const settings = loadSettings({ file, env: {} });
-  assert.equal(settings.autoClaimStartHour, 20);
-  assert.equal(settings.autoClaimEndHour, 21);
+  assert.equal(settings.autoClaimStartHour, 19);
+  assert.equal(settings.autoClaimEndHour, 24);
 });
 
-test('旧环境变量 UGW_AUTO_CLAIM_HOUR 同样映射', () => {
+test('旧环境变量 UGW_AUTO_CLAIM_HOUR 被忽略', () => {
   const { file } = tmpFile();
   const settings = loadSettings({ file, env: { UGW_AUTO_CLAIM_HOUR: '7' } });
-  assert.equal(settings.autoClaimStartHour, 7);
-  assert.equal(settings.autoClaimEndHour, 8);
+  assert.equal(settings.autoClaimStartHour, 19);
+  assert.equal(settings.autoClaimEndHour, 24);
 });
 
-test('新键优先于旧键', () => {
+test('旧键不干扰新键', () => {
   const { file } = tmpFile();
   fs.writeFileSync(file, JSON.stringify({ autoClaimHour: 3, autoClaimStartHour: 20, autoClaimEndHour: 24 }));
   const settings = loadSettings({ file, env: { UGW_AUTO_CLAIM_HOUR: '1' } });

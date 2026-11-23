@@ -193,7 +193,8 @@ curl -s -X POST http://127.0.0.1:8790/v1/messages \
 
 改窗口用面板设置页的 `autoClaimStartHour` / `autoClaimEndHour`（终点 24 表示 23:59），
 或环境变量 `UGW_AUTO_CLAIM_START_HOUR` / `UGW_AUTO_CLAIM_END_HOUR`。旧的单整点 `autoClaimHour`
-（含 `UGW_AUTO_CLAIM_HOUR`）仍可读，会按「该点到下一整点」换算。
+（含 `UGW_AUTO_CLAIM_HOUR`）已废弃且会被忽略：它的默认值 9 不是用户的真实意图，
+任何带着它的旧格式配置文件都会直接落回默认的 19–24。
 
 ### ZCode 套餐领取
 

@@ -14,7 +14,8 @@ export interface PoolSettings {
   breakerCooldownMs: number
   breakerCapMs: number
   autoClaimEnabled: number
-  autoClaimHour: number
+  autoClaimStartHour: number
+  autoClaimEndHour: number
   weekendGrabEnabled: number
   wbCreditTokensRate: number
   qoderCreditTokensRate: number

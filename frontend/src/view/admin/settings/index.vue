@@ -44,7 +44,8 @@ const GROUPS: Array<{ title: string; fields: FieldSpec[] }> = [
     title: '自动领取',
     fields: [
       { key: 'autoClaimEnabled', label: '每日自动领取', unit: '', factor: 0 },
-      { key: 'autoClaimHour', label: '每日补领时点', unit: '点', factor: 0 },
+      { key: 'autoClaimStartHour', label: '补领窗口起点', unit: '点', factor: 0 },
+      { key: 'autoClaimEndHour', label: '补领窗口终点（24 = 当天末）', unit: '点', factor: 0 },
       { key: 'weekendGrabEnabled', label: 'ZCode 周末活动包抢领', unit: '', factor: 0 },
     ],
   },
@@ -76,7 +77,9 @@ async function load(): Promise<void> {
           ? String(settings[f.key])
           : f.factor > 0
             ? String(settings[f.key] / f.factor)
-            : String(settings[f.key] ? 1 : 0)
+            : BOOLEAN_KEYS.has(String(f.key))
+              ? String(settings[f.key] ? 1 : 0)
+              : String(Math.round(settings[f.key]))
       }
     }
     groups.value = GROUPS
